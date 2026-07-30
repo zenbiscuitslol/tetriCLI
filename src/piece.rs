@@ -326,7 +326,7 @@ const I_KICKS: [[&[(i32, i32)]; 4]; 4] = [
     ],
 ];
 
-fn kicks_for(kind: Tetromino) -> &'static [[&[(i32, i32)]; 4]; 4] {
+fn kicks_for(kind: Tetromino) -> &'static [[&'static [(i32, i32)]; 4]; 4] {
     match kind {
         Tetromino::I => &I_KICKS,
         _ => &JLSTZ_KICKS,
