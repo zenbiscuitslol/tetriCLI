@@ -96,6 +96,7 @@ impl Action {
     ];
 
     /// Human-readable name for this action.
+    #[allow(dead_code)]
     pub const fn name(self) -> &'static str {
         match self {
             Self::MoveLeft => "Move Left",
@@ -113,6 +114,7 @@ impl Action {
 
 /// Look up the binding string for `action` inside `controls`, returning it as
 /// a borrowed slice where possible via a match.
+#[allow(dead_code)]
 pub fn binding_for<'a>(action: Action, controls: &'a crate::settings::Controls) -> &'a str {
     match action {
         Action::MoveLeft => &controls.move_left,

@@ -110,6 +110,7 @@ impl Board {
     }
 
     /// The number of the topmost filled row (FIELD_ROWS if the board is empty).
+    #[allow(dead_code)]
     pub fn highest_filled_row(&self) -> usize {
         self.highest_row
     }

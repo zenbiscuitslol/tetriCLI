@@ -47,6 +47,7 @@ impl Tetromino {
     }
 
     /// A short, uppercase identifier used by the HUD and stats.
+    #[allow(dead_code)]
     pub fn letter(self) -> char {
         match self {
             Self::I => 'I',
@@ -109,6 +110,7 @@ impl Rotation {
     }
 
     /// Rotate by `self` -> 180.
+    #[allow(dead_code)]
     pub fn one_eighty(self) -> Self {
         match self {
             Self::Spawn => Self::OneEighty,
@@ -158,6 +160,7 @@ impl ActivePiece {
         }
     }
 
+    #[allow(dead_code)]
     pub fn rotated(&self, rot: Rotation) -> Self {
         Self {
             kind: self.kind,

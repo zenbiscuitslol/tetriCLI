@@ -27,6 +27,7 @@ pub const BLOCK: &str = "█";
 pub const GHOST: &str = "▒";
 
 /// A centered title bar for bordered widgets.
+#[allow(dead_code)]
 pub fn title<'a>(text: &'a str) -> Line<'a> {
     Line::from(Span::styled(
         text.to_string(),
@@ -35,6 +36,7 @@ pub fn title<'a>(text: &'a str) -> Line<'a> {
 }
 
 /// Style a string with the tetromino's color (used for the hold/next previews).
+#[allow(dead_code)]
 pub fn colored(text: &str, kind: Tetromino) -> Span<'_> {
     Span::styled(text.to_string(), Style::default().fg(tetromino_color(kind)))
 }

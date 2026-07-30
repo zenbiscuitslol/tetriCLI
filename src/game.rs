@@ -52,6 +52,7 @@ impl SpecialKind {
         )
     }
 
+    #[allow(dead_code)]
     pub fn is_difficult(self) -> bool {
         // Tetris and any T-Spin (single/double/triple; mini does NOT count for
         // back-to-back) are "difficult" line clears that maintain back-to-back.
@@ -64,6 +65,7 @@ impl SpecialKind {
         )
     }
 
+    #[allow(dead_code)]
     pub fn lines(self) -> u32 {
         match self {
             SpecialKind::Single | SpecialKind::TSpinSingle => 1,

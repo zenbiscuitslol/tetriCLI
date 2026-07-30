@@ -61,6 +61,7 @@ impl Menu {
         }
     }
 
+    #[allow(dead_code)]
     pub fn kind(&self) -> MenuKind {
         self.kind
     }
@@ -77,6 +78,7 @@ impl Menu {
         self.selected
     }
 
+    #[allow(dead_code)]
     pub fn list_state(&self) -> &ListState {
         &self.list_state
     }
@@ -114,6 +116,7 @@ impl Menu {
     }
 
     /// Cancel any in-progress rebinding.
+    #[allow(dead_code)]
     pub fn cancel_rebind(&mut self) {
         self.pending_binding = None;
     }

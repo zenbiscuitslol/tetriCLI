@@ -9,9 +9,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 
 use crate::game::{DaspDirection, Game};
-use crate::input::{binding_for, Action};
+use crate::input::Action;
 use crate::menu::{BindingCapture, Menu, MenuKind};
-use crate::piece::Tetromino;
 use crate::save;
 use crate::settings::Settings;
 
@@ -40,9 +39,7 @@ pub struct App {
     fps_avg: f64,
     fps_samples: f64,
     last_fps_update: Instant,
-    /// Tracks whether we're still on the splash (any key dismisses it).
-    dismiss_splash_on_key: bool,
-}
+    }
 
 const TICK_MS: u64 = crate::game::DT_MS;
 const TICK_DURATION: Duration = Duration::from_millis(TICK_MS);
@@ -63,22 +60,25 @@ impl App {
             fps_avg: 0.0,
             fps_samples: 0.0,
             last_fps_update: Instant::now(),
-            dismiss_splash_on_key: true,
         }
     }
 
+    #[allow(dead_code)]
     pub fn screen(&self) -> Screen {
         self.screen
     }
 
+    #[allow(dead_code)]
     pub fn menu(&self) -> &Menu {
         &self.menu
     }
 
+    #[allow(dead_code)]
     pub fn game(&self) -> Option<&Game> {
         self.game.as_ref()
     }
 
+    #[allow(dead_code)]
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
@@ -412,10 +412,12 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     fn clear_das_left(&self, game: &mut Game) {
         game.das_release(DaspDirection::Left);
     }
 
+    #[allow(dead_code)]
     fn clear_das_right(&self, game: &mut Game) {
         game.das_release(DaspDirection::Right);
     }
@@ -440,12 +442,4 @@ impl App {
             game.set_soft_dropping(false);
         }
     }
-}
-
-// Re-export DaspDirection into the game module's public namespace is not needed
-// since we import it from `crate::game`.
-#[allow(dead_code)]
-fn _unused() {
-    let _ = Tetromino::I;
-    let _ = binding_for(Action::Hold, &crate::settings::Controls::default());
 }
