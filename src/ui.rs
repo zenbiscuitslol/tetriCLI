@@ -3,7 +3,6 @@
 //! menus.
 
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::symbols::line;
 use ratatui::text::{Line, Span};
 
 use crate::piece::Tetromino;
@@ -33,16 +32,6 @@ pub fn title<'a>(text: &'a str) -> Line<'a> {
         text.to_string(),
         Style::default().add_modifier(Modifier::BOLD),
     ))
-}
-
-/// Box-drawing border symbols re-exported for the renderer.
-pub mod border {
-    pub const TL: &str = line::TOP_LEFT;
-    pub const TR: &str = line::TOP_RIGHT;
-    pub const BL: &str = line::BOTTOM_LEFT;
-    pub const BR: &str = line::BOTTOM_RIGHT;
-    pub const H: &str = line::HORIZONTAL;
-    pub const V: &str = line::VERTICAL;
 }
 
 /// Style a string with the tetromino's color (used for the hold/next previews).

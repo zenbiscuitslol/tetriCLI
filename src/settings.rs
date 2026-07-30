@@ -13,7 +13,7 @@ pub struct Settings {
 
 /// Rebindable controls. Each binding is the stringified name of a
 /// [`crate::input::Key`](super::input::Key) value.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Controls {
     pub move_left: String,
     pub move_right: String,
