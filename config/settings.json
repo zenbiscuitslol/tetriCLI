@@ -1,0 +1,30 @@
+{
+  "controls": {
+    "move_left": "Left",
+    "move_right": "Right",
+    "soft_drop": "Down",
+    "hard_drop": "Space",
+    "rotate_cw": "Up",
+    "rotate_ccw": "Z",
+    "hold": "C",
+    "pause": "Esc",
+    "restart": "R"
+  },
+  "gameplay": {
+    "starting_level": 1,
+    "das": 133,
+    "arr": 20,
+    "soft_drop_factor": 20,
+    "lock_delay_ms": 500,
+    "max_lock_resets": 15,
+    "show_ghost": true,
+    "show_fps": false
+  },
+  "stats": {
+    "games_played": 0,
+    "total_lines": 0,
+    "best_score": 0,
+    "best_level": 0,
+    "total_playtime_secs": 0.0
+  }
+}
