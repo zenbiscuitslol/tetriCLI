@@ -241,10 +241,10 @@ impl Game {
     /// Attempt a hold swap. The held piece (if any) spawns immediately; the
     /// current piece is put on hold. Only one hold per piece is allowed.
     pub fn try_hold(&mut self) {
-        if self.hold_used || self.current.is_none() || self.game_over {
+        if self.hold_used || self.game_over {
             return;
         }
-        let cur = self.current.unwrap();
+        let Some(cur) = self.current else { return };
         let stored = self.hold.replace(cur.kind);
         self.hold_used = true;
         if let Some(prev) = stored {

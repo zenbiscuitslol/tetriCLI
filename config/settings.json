@@ -4,14 +4,14 @@
     "move_right": "Right",
     "soft_drop": "Down",
     "hard_drop": "Space",
-    "rotate_cw": "Up",
-    "rotate_ccw": "Z",
+    "rotate_cw": "D",
+    "rotate_ccw": "A",
     "hold": "C",
     "pause": "Esc",
     "restart": "R"
   },
   "gameplay": {
-    "starting_level": 1,
+    "starting_level": 9,
     "das": 133,
     "arr": 20,
     "soft_drop_factor": 20,
