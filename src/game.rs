@@ -118,6 +118,8 @@ pub struct Game {
 
     // Per-frame event log for the HUD.
     pub events: EventLog,
+    /// Countdown (ms) for the transient clear banner shown on the HUD.
+    clear_banner_timer: u64,
 
     // True once the current piece's spawn fully atop hidden rows would overlap
     // the field — handles block-out / lock-out top-out conditions.
@@ -169,6 +171,7 @@ impl Game {
             on_ground: false,
             spawn_delay: 0,
             events: EventLog::default(),
+            clear_banner_timer: 0,
             game_over: false,
             last_action_was_rotate: false,
             last_rotation_kick: 0,
@@ -352,6 +355,15 @@ impl Game {
         if self.game_over {
             return;
         }
+
+        // Expire the transient clear banner after ~2 seconds.
+        if self.clear_banner_timer > 0 {
+            self.clear_banner_timer = self.clear_banner_timer.saturating_sub(DT_MS);
+            if self.clear_banner_timer == 0 {
+                self.events.last_clear_text = None;
+            }
+        }
+
         if self.spawn_delay > 0 {
             self.spawn_delay = self.spawn_delay.saturating_sub(DT_MS);
             if self.spawn_delay == 0 {
@@ -359,35 +371,35 @@ impl Game {
             }
             return;
         }
-        let Some(piece) = self.current else { return };
+        if self.current.is_none() {
+            return;
+        }
 
         // DAS / ARR auto-shift.
         self.update_das();
 
         // Soft drop gravity override.
         let g = if self.soft_dropping {
-            // Soft drop is `soft_drop_factor`x gravity, but at minimum 1 row/frame.
-            (self.gravity_ms / self.settings.gameplay.soft_drop_factor.max(1) as f64)
-                .max(1.0)
+            (self.gravity_ms / self.settings.gameplay.soft_drop_factor.max(1) as f64).max(1.0)
         } else {
             self.gravity_ms
         };
 
         self.gravity_acc += DT_MS as f64;
-        let mut moved_down = false;
         while self.gravity_acc >= g {
             self.gravity_acc -= g;
             if !self.soft_drop_step() {
-                // Hit the floor; stop trying to drop further this frame.
                 self.gravity_acc = 0.0;
                 break;
             }
-            moved_down = true;
         }
-        let _ = moved_down;
 
-        // Recompute grounded state and progress lock delay.
-        let grounded = self.is_grounded(piece);
+        // Recompute grounded state using the *current* piece position (which
+        // may have changed due to DAS or gravity this tick).
+        let grounded = self
+            .current
+            .map(|p| self.is_grounded(p))
+            .unwrap_or(false);
         self.on_ground = grounded;
         if grounded {
             if self.lock_timer.is_none() {
@@ -507,6 +519,9 @@ impl Game {
         // Build a HUD event summary.
         let special = combine_special(lines, kind, perfect_clear);
         self.events.last_clear_text = describe_clear(special, lines, perfect_clear);
+        if self.events.last_clear_text.is_some() {
+            self.clear_banner_timer = 2000; // 2 second display
+        }
         self.events.last_b2b = self.back_to_back;
         self.events.last_combo = self.combo.unwrap_or(0);
         self.events.last_special = special;
@@ -547,9 +562,9 @@ impl Game {
             (1, true) => 800,  // T-Spin Single
             (2, true) => 1200, // T-Spin Double
             (3, true) => 1600, // T-Spin Triple
-            (1, false) => 0,   // handled via table below
-            (2, false) => 300,
-            (3, false) => 500,
+            (1, false) => 100,  // Single
+            (2, false) => 300,  // Double
+            (3, false) => 500,  // Triple
             (4, false) => 800, // Tetris
             _ => 0,
         };
