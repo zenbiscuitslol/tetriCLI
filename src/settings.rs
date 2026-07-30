@@ -37,6 +37,14 @@ pub struct Gameplay {
     pub max_lock_resets: u32,
     pub show_ghost: bool,
     pub show_fps: bool,
+    /// Horizontal scale of the playfield, measured in terminal cells per block.
+    /// Range 1..=4. Default 2 (each block is 2 chars wide).
+    #[serde(default = "default_grid_scale")]
+    pub grid_scale: u32,
+}
+
+fn default_grid_scale() -> u32 {
+    2
 }
 
 /// Persisted lifetime statistics.
@@ -72,6 +80,7 @@ impl Default for Settings {
                 max_lock_resets: 15,
                 show_ghost: true,
                 show_fps: false,
+                grid_scale: 2,
             },
             stats: Stats {
                 games_played: 0,

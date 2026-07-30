@@ -21,6 +21,7 @@ pub enum Screen {
     MainMenu,
     Settings,
     Controls,
+    GameplaySettings,
     Gameplay,
     Paused,
     GameOver,
@@ -213,6 +214,7 @@ impl App {
             Screen::MainMenu => self.handle_main_menu(ev),
             Screen::Settings => self.handle_settings_menu(ev),
             Screen::Controls => self.handle_controls_menu(ev),
+            Screen::GameplaySettings => self.handle_gameplay_settings_menu(ev),
             Screen::Paused => self.handle_pause_menu(ev),
             Screen::GameOver => self.handle_game_over_menu(ev),
             Screen::Stats => self.handle_stats_screen(ev),
@@ -265,10 +267,8 @@ impl App {
                     self.menu.set_kind(MenuKind::Controls, &self.settings);
                 }
                 1 => {
-                    // Gameplay submenu: cycle starting level directly for now.
-                    let lvl = self.settings.gameplay.starting_level;
-                    self.settings.gameplay.starting_level = (lvl % 20) + 1;
-                    save::save(&self.settings).ok();
+                    self.enter(Screen::GameplaySettings);
+                    self.menu.set_kind(MenuKind::Gameplay, &self.settings);
                 }
                 2 => self.go_back(),
                 _ => {}
@@ -289,6 +289,49 @@ impl App {
             self.menu.set_kind(MenuKind::Settings, &self.settings);
         }
         false
+    }
+
+    /// Gameplay settings submenu: two cyclable options (Starting Level and
+    /// Grid Scale). Up/Down selects an option; Left/Right or Enter cycles its
+    /// value; Esc returns to the Settings menu.
+    fn handle_gameplay_settings_menu(&mut self, ev: KeyEvent) -> bool {
+        let len = MenuKind::Gameplay.len();
+        let _ = self.navigate_menu(ev, len);
+        let idx = self.menu.selected();
+        match ev.code {
+            KeyCode::Left => self.cycle_gameplay_option(idx, false),
+            KeyCode::Right | KeyCode::Enter => self.cycle_gameplay_option(idx, true),
+            KeyCode::Esc => {
+                self.go_back();
+                self.menu.set_kind(MenuKind::Settings, &self.settings);
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Cycle the gameplay option at `idx` forward (`up`) or backward.
+    fn cycle_gameplay_option(&mut self, idx: usize, up: bool) {
+        match idx {
+            0 => {
+                let lvl = self.settings.gameplay.starting_level;
+                self.settings.gameplay.starting_level = if up {
+                    (lvl % 20) + 1
+                } else {
+                    if lvl <= 1 { 20 } else { lvl - 1 }
+                };
+            }
+            1 => {
+                let scale = self.settings.gameplay.grid_scale.clamp(1, 4);
+                self.settings.gameplay.grid_scale = if up {
+                    if scale >= 4 { 1 } else { scale + 1 }
+                } else {
+                    if scale <= 1 { 4 } else { scale - 1 }
+                };
+            }
+            _ => {}
+        }
+        save::save(&self.settings).ok();
     }
 
     fn handle_pause_menu(&mut self, ev: KeyEvent) -> bool {
@@ -379,13 +422,9 @@ impl App {
         match action {
             Action::MoveLeft => {
                 game.shift(-1);
-                game.das_release(DaspDirection::Right);
-                game.das_start(DaspDirection::Left);
             }
             Action::MoveRight => {
                 game.shift(1);
-                game.das_release(DaspDirection::Left);
-                game.das_start(DaspDirection::Right);
             }
             Action::SoftDrop => {
                 game.set_soft_dropping(true);

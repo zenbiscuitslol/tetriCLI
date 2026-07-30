@@ -36,6 +36,7 @@ pub fn render(
         Screen::MainMenu => render_main_menu(frame, menu),
         Screen::Settings => render_settings(frame, menu),
         Screen::Controls => render_controls(frame, menu),
+        Screen::GameplaySettings => render_gameplay_settings(frame, menu, settings),
         Screen::Gameplay => {
             if let Some(game) = game {
                 render_game(frame, game);
@@ -67,12 +68,12 @@ pub fn render(
 fn render_splash(frame: &mut Frame) {
     let area = frame.size();
     let logo = [
-        "████████╗███████╗██████╗ ███████╗██╗████████╗██╗██████╗",
-        "╚══██╔══╝██╔════╝██╔══██╗██╔════╝██║╚══██╔══╝██║██╔══██╗",
-        "   ██║   █████╗  ██████╔╝███████╗██║   ██║   ██║██████╔╝",
-        "   ██║   ██╔══╝  ██╔══██╗╚════██║██║   ██║   ██║██╔══██╗",
-        "   ██║   ███████╗██║  ██║███████║██║   ██║   ██║██║  ██║",
-        "   ╚═╝   ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝   ╚═╝╚═╝  ╚═╝",
+        "████████ ███████╗ ████████ ███████╗ ██╗      ███████╗ ██╗      ██████╗",
+        " ══██╔═ ██╔════╝  ══██╔═ ██╔════╝ ██║      ██╔════╝ ██║      ╚══██╔══",
+        "   ██║   ██████╗     ██║   ██████╗  ██║      ██║      ██║         ██║",
+        "   ██║   ██╔═══╝     ██║   ██╔══██╗ ██║      ██║      ██║         ██║",
+        "   ██║   ███████╗    ██║   ██║  ██║ ██║      ╚██████╗ ███████╗ ██████║",
+        "   ╚═╝   ╚══════╝    ╚═╝   ╚═╝  ╚═╝ ╚═╝       ╚═════╝ ╚══════╝ ╚═════╝",
     ];
     let subtitle = "a terminal Tetris";
     let prompt = "Press any key to continue…";
@@ -107,7 +108,7 @@ fn render_splash(frame: &mut Frame) {
 
 fn render_main_menu(frame: &mut Frame, menu: &Menu) {
     let area = frame.size();
-    let title_lines = ["══════════════════════", "        TETRIS        ", "══════════════════════"];
+    let title_lines = ["══════════════════════", "       tetriCLI       ", "══════════════════════"];
     let items = ["Play", "Settings", "Statistics", "Quit"];
     let selected = menu.selected();
 
@@ -158,6 +159,74 @@ fn render_settings(frame: &mut Frame, menu: &Menu) {
     let area = frame.size();
     let items = ["Controls", "Gameplay", "Back"];
     render_simple_menu(frame, area, "Settings", &items, menu.selected());
+}
+
+// ---------------------------------------------------------------------------
+// Gameplay settings (cyclable options) menu
+// ---------------------------------------------------------------------------
+
+fn render_gameplay_settings(frame: &mut Frame, menu: &Menu, settings: &Settings) {
+    let area = frame.size();
+    let selected = menu.selected();
+    let level = settings.gameplay.starting_level;
+    let scale = settings.gameplay.grid_scale.clamp(1, 4);
+
+    let rows: [(&str, String); 2] = [
+        ("Starting Level", level.to_string()),
+        ("Grid Scale", format!("{scale}x")),
+    ];
+
+    let width = area.width.min(34);
+    let height = rows.len() as u16 * 2 + 6;
+    let inner = block_centered(frame, area, width, height);
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "Gameplay".to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    let footer_y = inner.bottom().saturating_sub(1);
+    let side_w = inner.width / 2;
+    for (i, (label, value)) in rows.iter().enumerate() {
+        let row_y = inner.y + 1 + i as u16 * 2;
+        if row_y >= footer_y {
+            break;
+        }
+        let is_sel = i == selected;
+        let label_style = if is_sel {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let value_style = if is_sel {
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let prefix = if is_sel { "> " } else { "  " };
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!("{prefix}{label}"), label_style))
+                .alignment(Alignment::Left),
+            Rect::new(inner.x, row_y, side_w, 1),
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(value.clone(), value_style)).alignment(Alignment::Right),
+            Rect::new(inner.x + side_w, row_y, inner.width - side_w, 1),
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "<↑/↓> navigate   <←/→> change   <Esc> back".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))
+        .alignment(Alignment::Center),
+        Rect::new(inner.x, footer_y, inner.width, 1),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +389,7 @@ fn render_stats(frame: &mut Frame, menu: &Menu, settings: &Settings) {
 fn render_game(frame: &mut Frame, game: &Game) {
     let area = frame.size();
 
-    let cell_w = 2u16;
+    let cell_w = cell_width(game);
     let field_w = FIELD_COLS as u16 * cell_w;
     let hud_w = 20u16;
     let gap = 1u16;
@@ -337,18 +406,24 @@ fn render_game(frame: &mut Frame, game: &Game) {
     render_hud(frame, game, hud);
 }
 
+/// Resolve the per-block cell width from the gameplay `grid_scale` setting,
+/// clamped to the supported 1..=4 range.
+fn cell_width(game: &Game) -> u16 {
+    game.settings.gameplay.grid_scale.clamp(1, 4) as u16
+}
+
 fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(Span::styled(
-            " TETRIS ".to_string(),
+            " tetriCLI ".to_string(),
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
-    let cell_w = 2u16;
+    let cell_w = cell_width(game);
     let grid = game.board.cells();
 
     // Locked cells.
@@ -358,7 +433,7 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
             if let Some(kind) = view_row[c].0 {
                 let x = inner.x + c as u16 * cell_w;
                 let y = inner.y + r as u16;
-                paint_cell(frame, x, y, kind, BLOCK, false);
+                paint_cell(frame, x, y, kind, BLOCK, false, cell_w);
             }
         }
     }
@@ -378,7 +453,7 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
                     if vr < ROWS_VISIBLE {
                         let gx = inner.x + x as u16 * cell_w;
                         let gy = inner.y + vr as u16;
-                        paint_cell(frame, gx, gy, ghost.kind, GHOST, true);
+                        paint_cell(frame, gx, gy, ghost.kind, GHOST, true, cell_w);
                     }
                 }
             }
@@ -395,14 +470,14 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
                 if vr < ROWS_VISIBLE {
                     let px = inner.x + x as u16 * cell_w;
                     let py = inner.y + vr as u16;
-                    paint_cell(frame, px, py, piece.kind, BLOCK, false);
+                    paint_cell(frame, px, py, piece.kind, BLOCK, false, cell_w);
                 }
             }
         }
     }
 }
 
-fn paint_cell(frame: &mut Frame, x: u16, y: u16, kind: crate::piece::Tetromino, glyph: &str, dim: bool) {
+fn paint_cell(frame: &mut Frame, x: u16, y: u16, kind: crate::piece::Tetromino, glyph: &str, dim: bool, w: u16) {
     let color = tetromino_color(kind);
     let style = if dim {
         Style::default().fg(Color::DarkGray)
@@ -410,8 +485,8 @@ fn paint_cell(frame: &mut Frame, x: u16, y: u16, kind: crate::piece::Tetromino, 
         Style::default().fg(color).add_modifier(Modifier::BOLD)
     };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(glyph.repeat(2), style))),
-        Rect::new(x, y, 2, 1),
+        Paragraph::new(Line::from(Span::styled(glyph.repeat(w as usize), style))),
+        Rect::new(x, y, w, 1),
     );
 }
 

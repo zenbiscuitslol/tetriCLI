@@ -103,8 +103,13 @@ pub struct Game {
     // Timing, DAS/ARR.
     gravity_ms: f64,
     gravity_acc: f64,
+    // Retained for settings.json backward-compatibility; DAS auto-shift was
+    // removed in favour of one-cell-per-press movement.
+    #[allow(dead_code)]
     das_dir: DaspDirection,
+    #[allow(dead_code)]
     das_timer: u64,
+    #[allow(dead_code)]
     arr_timer: u64,
     soft_dropping: bool,
 
@@ -327,7 +332,10 @@ impl Game {
         }
     }
 
-    /// Begin DAS charging in `dir`. Called when a move key is first pressed.
+    /// Begin DAS charging in `dir`. Retained for backward compatibility; the
+    /// auto-shift loop (`update_das`) was removed so this now does nothing
+    /// useful but keeps the public API stable.
+    #[allow(dead_code)]
     pub fn das_start(&mut self, dir: DaspDirection) {
         if dir == self.das_dir {
             return;
@@ -338,6 +346,7 @@ impl Game {
     }
 
     /// Release DAS (a move key was lifted).
+    #[allow(dead_code)]
     pub fn das_release(&mut self, dir: DaspDirection) {
         if self.das_dir == dir {
             self.das_dir = DaspDirection::None;
@@ -374,9 +383,6 @@ impl Game {
         if self.current.is_none() {
             return;
         }
-
-        // DAS / ARR auto-shift.
-        self.update_das();
 
         // Soft drop gravity override.
         let g = if self.soft_dropping {
@@ -419,43 +425,10 @@ impl Game {
         }
     }
 
-    fn update_das(&mut self) {
-        // Copy the DAS/ARR values out so we don't hold an immutable borrow of
-        // `self.settings` while calling `self.shift` (which borrows `self`
-        // mutably).
-        let das = self.settings.gameplay.das;
-        let arr = self.settings.gameplay.arr;
-        match self.das_dir {
-            DaspDirection::None => {}
-            DaspDirection::Left | DaspDirection::Right => {
-                let dir = match self.das_dir {
-                    DaspDirection::Left => -1,
-                    DaspDirection::Right => 1,
-                    _ => 0,
-                };
-                if self.das_timer < das {
-                    self.das_timer += DT_MS;
-                    if self.das_timer >= das {
-                        self.shift(dir);
-                        self.arr_timer = 0;
-                    }
-                } else if arr == 0 {
-                    let mut guard = 0;
-                    while self.shift(dir) && guard < FIELD_COLS as i32 + 4 {
-                        guard += 1;
-                    }
-                } else {
-                    self.arr_timer += DT_MS;
-                    while self.arr_timer >= arr {
-                        self.arr_timer -= arr;
-                        if !self.shift(dir) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // DAS/ARR auto-shift was removed so that each move-key press shifts the
+    // piece by exactly one cell. `das_start` / `das_release` below remain as
+    // harmless no-ops so existing callers and the persisted `das`/`arr` settings
+    // stay valid for backward compatibility.
 
     fn is_grounded(&self, piece: ActivePiece) -> bool {
         collides(&self.board, piece.moved(0, 1))

@@ -14,6 +14,7 @@ pub enum MenuKind {
     Main,
     Settings,
     Controls,
+    Gameplay,
     Pause,
     GameOver,
 }
@@ -24,6 +25,7 @@ impl MenuKind {
             Self::Main => 4,
             Self::Settings => 3,
             Self::Controls => 9,
+            Self::Gameplay => 2,
             Self::Pause => 4,
             Self::GameOver => 3,
         }
