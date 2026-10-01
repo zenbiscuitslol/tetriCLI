@@ -4,11 +4,9 @@
 //! Rendering is fully buffered through `ratatui::Frame`. The renderer never
 //! reads input or mutates game state.
 
-use std::time::Instant;
-
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 
@@ -18,7 +16,8 @@ use crate::game::{Game, SpecialKind};
 use crate::menu::Menu;
 use crate::piece::{ActivePiece, Rotation, FIELD_COLS, FIELD_ROWS, HIDDEN_ROWS};
 use crate::settings::Settings;
-use crate::ui::{tetromino_color, BLOCK, GHOST};
+use crate::piece::Tetromino;
+use crate::ui::{paint_block, BlockStyle};
 
 pub const ROWS_VISIBLE: usize = FIELD_ROWS - HIDDEN_ROWS;
 
@@ -256,7 +255,7 @@ fn render_controls(frame: &mut Frame, menu: &Menu) {
     let footer_y = inner.bottom().saturating_sub(1);
 
     for (i, (label, field)) in fields.iter().enumerate() {
-        let binding = field_value(controls, *field);
+        let binding = field_value(controls, field);
         let pretty = crate::input::pretty_label(binding);
 
         let is_sel = i == selected;
@@ -389,30 +388,40 @@ fn render_stats(frame: &mut Frame, menu: &Menu, settings: &Settings) {
 fn render_game(frame: &mut Frame, game: &Game) {
     let area = frame.size();
 
-    let cell_w = cell_width(game);
+    let (cell_w, cell_h) = cell_dims(game, area);
     let field_w = FIELD_COLS as u16 * cell_w;
+    let field_h = ROWS_VISIBLE as u16 * cell_h;
     let hud_w = 20u16;
     let gap = 1u16;
     let total_w = field_w + 2 + gap + hud_w + 2;
-    let total_h = ROWS_VISIBLE as u16 + 2;
+    let total_h = field_h + 2;
 
     let layout_left = area.width.saturating_sub(total_w) / 2;
     let layout_top = area.height.saturating_sub(total_h) / 2;
 
-    let playfield = Rect::new(layout_left, layout_top, field_w + 2, total_h);
-    let hud = Rect::new(playfield.right() + gap, layout_top, hud_w, total_h);
+    // Clip to the terminal so undersized windows degrade instead of panicking.
+    let playfield = Rect::new(layout_left, layout_top, field_w + 2, total_h).intersection(area);
+    let hud = Rect::new(layout_left + field_w + 2 + gap, layout_top, hud_w, total_h).intersection(area);
 
-    render_playfield(frame, game, playfield);
+    render_playfield(frame, game, playfield, cell_w, cell_h);
     render_hud(frame, game, hud);
 }
 
-/// Resolve the per-block cell width from the gameplay `grid_scale` setting,
-/// clamped to the supported 1..=4 range.
-fn cell_width(game: &Game) -> u16 {
-    game.settings.gameplay.grid_scale.clamp(1, 4) as u16
+fn cell_dims(game: &Game, area: Rect) -> (u16, u16) {
+    let scale = game.settings.gameplay.grid_scale.clamp(1, 4) as u16;
+    let hud_w = 20u16;
+    let gap = 1u16;
+    let margin = 4u16;
+    let max_field_inner_w = area.width.saturating_sub(hud_w + gap + margin + 2);
+    let max_field_inner_h = area.height.saturating_sub(margin + 2);
+    let max_cell_w = (max_field_inner_w / FIELD_COLS as u16).max(1);
+    let max_cell_h = (max_field_inner_h / ROWS_VISIBLE as u16).max(1);
+    let cell_w = max_cell_w.min(scale * 2).max(1);
+    let cell_h = max_cell_h.min(scale).max(1);
+    (cell_w, cell_h)
 }
 
-fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
+fn render_playfield(frame: &mut Frame, game: &Game, area: Rect, cell_w: u16, cell_h: u16) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -423,38 +432,35 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
-    let cell_w = cell_width(game);
     let grid = game.board.cells();
+    let cell_origin = |col: usize, vis_row: usize| {
+        (inner.x + col as u16 * cell_w, inner.y + vis_row as u16 * cell_h)
+    };
 
-    // Locked cells.
+    // Locked cells, with a faint dot grid in the empty ones.
+    let buf = frame.buffer_mut();
     for r in 0..ROWS_VISIBLE {
         let view_row = &grid[r + HIDDEN_ROWS];
         for c in 0..FIELD_COLS {
-            if let Some(kind) = view_row[c].0 {
-                let x = inner.x + c as u16 * cell_w;
-                let y = inner.y + r as u16;
-                paint_cell(frame, x, y, kind, BLOCK, false, cell_w);
+            let (x, y) = cell_origin(c, r);
+            match view_row[c].0 {
+                Some(kind) => paint_block(buf, x, y, cell_w, cell_h, kind, BlockStyle::Solid),
+                None => {}
             }
         }
     }
 
-    // Ghost piece.
+    // Ghost piece (skipping cells the live piece already covers).
     if game.settings.gameplay.show_ghost {
-        if let Some(ghost) = game.ghost() {
-            let cur_cells: Vec<(i32, i32)> = game.current.map(|c| c.cells().into_iter().collect()).unwrap_or_default();
+        if let (Some(ghost), Some(cur)) = (game.ghost(), game.current) {
+            let cur_cells = cur.cells();
             for (x, y) in ghost.cells() {
-                if y < 0 {
-                    continue;
-                }
                 if cur_cells.contains(&(x, y)) {
                     continue;
                 }
-                if let Some(vr) = Board::visible_row(y as usize) {
-                    if vr < ROWS_VISIBLE {
-                        let gx = inner.x + x as u16 * cell_w;
-                        let gy = inner.y + vr as u16;
-                        paint_cell(frame, gx, gy, ghost.kind, GHOST, true, cell_w);
-                    }
+                if let Some(vr) = visible_row(y) {
+                    let (px, py) = cell_origin(x as usize, vr);
+                    paint_block(buf, px, py, cell_w, cell_h, ghost.kind, BlockStyle::Ghost);
                 }
             }
         }
@@ -463,41 +469,30 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect) {
     // Current piece.
     if let Some(piece) = game.current {
         for (x, y) in piece.cells() {
-            if y < 0 {
-                continue;
-            }
-            if let Some(vr) = Board::visible_row(y as usize) {
-                if vr < ROWS_VISIBLE {
-                    let px = inner.x + x as u16 * cell_w;
-                    let py = inner.y + vr as u16;
-                    paint_cell(frame, px, py, piece.kind, BLOCK, false, cell_w);
-                }
+            if let Some(vr) = visible_row(y) {
+                let (px, py) = cell_origin(x as usize, vr);
+                paint_block(buf, px, py, cell_w, cell_h, piece.kind, BlockStyle::Solid);
             }
         }
     }
 }
 
-fn paint_cell(frame: &mut Frame, x: u16, y: u16, kind: crate::piece::Tetromino, glyph: &str, dim: bool, w: u16) {
-    let color = tetromino_color(kind);
-    let style = if dim {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(glyph.repeat(w as usize), style))),
-        Rect::new(x, y, w, 1),
-    );
+/// Map a board row to a visible-row index, if it is on screen.
+fn visible_row(y: i32) -> Option<usize> {
+    if y < 0 {
+        return None;
+    }
+    Board::visible_row(y as usize).filter(|&vr| vr < ROWS_VISIBLE)
 }
 
 fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(4),
+            Constraint::Length(9),
+            Constraint::Min(5),
             Constraint::Length(5),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Length(6),
         ])
         .split(area);
 
@@ -519,6 +514,9 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
     let slot_h = 2u16;
     for (i, kind) in game.queue.iter().take(4).enumerate() {
         let slot = Rect::new(next_inner.x, next_inner.y + i as u16 * slot_h, next_inner.width, slot_h);
+        if slot.bottom() > next_inner.bottom() {
+            break;
+        }
         preview_minipiece(frame, slot, *kind, false);
     }
 
@@ -597,41 +595,27 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
     }
 }
 
-/// Render a 4x2 mini-preview of a tetromino in a small slot.
-fn preview_minipiece(frame: &mut Frame, area: Rect, kind: crate::piece::Tetromino, used: bool) {
-    let piece = ActivePiece { kind, rot: Rotation::Spawn, x: 0, y: 0 };
-    let cells = piece.cells();
-
-    let mut min_x = i32::MAX;
-    let mut min_y = i32::MAX;
-    let mut max_x = i32::MIN;
-    let mut max_y = i32::MIN;
-    for &(x, y) in &cells {
-        min_x = min_x.min(x);
-        min_y = min_y.min(y);
-        max_x = max_x.max(x);
-        max_y = max_y.max(y);
-    }
-    let w = (max_x - min_x + 1) as u16;
-    let h = (max_y - min_y + 1) as u16;
-    let origin_x = area.x + (area.width.saturating_sub(w * 2)) / 2;
-    let origin_y = area.y + (area.height.saturating_sub(h)) / 2;
+/// Render a mini-preview of a tetromino (2x1 terminal cells per block),
+/// centered in `area`.
+fn preview_minipiece(frame: &mut Frame, area: Rect, kind: Tetromino, used: bool) {
+    let cells = ActivePiece { kind, rot: Rotation::Spawn, x: 0, y: 0 }.cells();
+    let min_x = cells.iter().map(|c| c.0).min().unwrap_or(0);
+    let min_y = cells.iter().map(|c| c.1).min().unwrap_or(0);
+    let max_x = cells.iter().map(|c| c.0).max().unwrap_or(0);
+    let max_y = cells.iter().map(|c| c.1).max().unwrap_or(0);
+    let pw = (max_x - min_x + 1) as u16 * 2;
+    let ph = (max_y - min_y + 1) as u16;
+    let origin_x = area.x + area.width.saturating_sub(pw) / 2;
+    let origin_y = area.y + area.height.saturating_sub(ph) / 2;
 
     frame.render_widget(Clear, area);
 
-    let color = tetromino_color(kind);
-    let style = if used {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default().fg(color).add_modifier(Modifier::BOLD)
-    };
+    let style = if used { BlockStyle::Disabled } else { BlockStyle::Solid };
+    let buf = frame.buffer_mut();
     for &(x, y) in &cells {
         let px = origin_x + (x - min_x) as u16 * 2;
         let py = origin_y + (y - min_y) as u16;
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(BLOCK.repeat(2), style))),
-            Rect::new(px, py, 2, 1),
-        );
+        paint_block(buf, px, py, 2, 1, kind, style);
     }
 }
 
@@ -778,9 +762,25 @@ fn format_playtime(secs: f64) -> String {
     }
 }
 
-// Silence unused-import warnings for symbols that may be referenced by
-// downstream or future code paths.
-#[allow(dead_code)]
-fn _silence() {
-    let _ = Instant::now();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    /// Gameplay must render without panicking at any scale or terminal size,
+    /// including ones too small to fit the full layout.
+    #[test]
+    fn render_game_fits_any_size() {
+        for scale in 1..=4 {
+            for (w, h) in [(120, 50), (80, 24), (60, 22), (40, 12)] {
+                let mut settings = Settings::default();
+                settings.gameplay.grid_scale = scale;
+                let mut game = Game::new(settings);
+                game.hard_drop();
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| render_game(f, &game)).unwrap();
+            }
+        }
+    }
 }

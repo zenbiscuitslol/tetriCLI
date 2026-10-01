@@ -44,7 +44,7 @@ pub struct Gameplay {
 }
 
 fn default_grid_scale() -> u32 {
-    2
+    1
 }
 
 /// Persisted lifetime statistics.
@@ -80,7 +80,7 @@ impl Default for Settings {
                 max_lock_resets: 15,
                 show_ghost: true,
                 show_fps: false,
-                grid_scale: 2,
+                grid_scale: 1,
             },
             stats: Stats {
                 games_played: 0,

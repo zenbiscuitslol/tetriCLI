@@ -103,15 +103,10 @@ pub struct Game {
     // Timing, DAS/ARR.
     gravity_ms: f64,
     gravity_acc: f64,
-    // Retained for settings.json backward-compatibility; DAS auto-shift was
-    // removed in favour of one-cell-per-press movement.
-    #[allow(dead_code)]
-    das_dir: DaspDirection,
-    #[allow(dead_code)]
-    das_timer: u64,
-    #[allow(dead_code)]
-    arr_timer: u64,
     soft_dropping: bool,
+    /// Remaining ms of soft drop when the terminal sends no key-release events;
+    /// key-repeat presses keep refreshing it. `None` means "until released".
+    soft_drop_ttl: Option<u64>,
 
     // Lock delay.
     lock_timer: Option<u64>,
@@ -134,13 +129,6 @@ pub struct Game {
     // "the last action was a rotation").
     last_action_was_rotate: bool,
     last_rotation_kick: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DaspDirection {
-    None,
-    Left,
-    Right,
 }
 
 impl Game {
@@ -167,10 +155,8 @@ impl Game {
             last_lock_was_tspin: false,
             gravity_ms: gravity_for_level(level),
             gravity_acc: 0.0,
-            das_dir: DaspDirection::None,
-            das_timer: 0,
-            arr_timer: 0,
             soft_dropping: false,
+            soft_drop_ttl: None,
             lock_timer: None,
             lock_resets: 0,
             on_ground: false,
@@ -298,6 +284,7 @@ impl Game {
         self.current = Some(new_piece);
         // Hard drop awards 2 points per cell dropped.
         self.score += 2 * dropped as u64;
+        self.set_soft_dropping(false);
         if dropped == 0 && !grounded {
             // Shouldn't normally happen, but be defensive.
             return;
@@ -332,31 +319,17 @@ impl Game {
         }
     }
 
-    /// Begin DAS charging in `dir`. Retained for backward compatibility; the
-    /// auto-shift loop (`update_das`) was removed so this now does nothing
-    /// useful but keeps the public API stable.
-    #[allow(dead_code)]
-    pub fn das_start(&mut self, dir: DaspDirection) {
-        if dir == self.das_dir {
-            return;
-        }
-        self.das_dir = dir;
-        self.das_timer = 0;
-        self.arr_timer = 0;
-    }
-
-    /// Release DAS (a move key was lifted).
-    #[allow(dead_code)]
-    pub fn das_release(&mut self, dir: DaspDirection) {
-        if self.das_dir == dir {
-            self.das_dir = DaspDirection::None;
-            self.das_timer = 0;
-            self.arr_timer = 0;
-        }
-    }
-
+    /// Start or stop soft drop. While active it lasts until explicitly stopped.
     pub fn set_soft_dropping(&mut self, v: bool) {
         self.soft_dropping = v;
+        self.soft_drop_ttl = None;
+    }
+
+    /// Soft drop that expires on its own unless refreshed (for terminals that
+    /// never report key releases).
+    pub fn soft_drop_pulse(&mut self, ttl_ms: u64) {
+        self.soft_dropping = true;
+        self.soft_drop_ttl = Some(ttl_ms);
     }
 
     /// Advance the game by one frame (`DT_MS` milliseconds).
@@ -384,6 +357,15 @@ impl Game {
             return;
         }
 
+        if let Some(ttl) = self.soft_drop_ttl {
+            let left = ttl.saturating_sub(DT_MS);
+            self.soft_drop_ttl = Some(left);
+            if left == 0 {
+                self.soft_dropping = false;
+                self.soft_drop_ttl = None;
+            }
+        }
+
         // Soft drop gravity override.
         let g = if self.soft_dropping {
             (self.gravity_ms / self.settings.gameplay.soft_drop_factor.max(1) as f64).max(1.0)
@@ -401,7 +383,7 @@ impl Game {
         }
 
         // Recompute grounded state using the *current* piece position (which
-        // may have changed due to DAS or gravity this tick).
+        // may have changed due to gravity this tick).
         let grounded = self
             .current
             .map(|p| self.is_grounded(p))
@@ -417,18 +399,12 @@ impl Game {
             if let Some(t) = self.lock_timer {
                 if t >= self.settings.gameplay.lock_delay_ms {
                     self.lock_current(false);
-                    return;
                 }
             }
         } else {
             self.lock_timer = None;
         }
     }
-
-    // DAS/ARR auto-shift was removed so that each move-key press shifts the
-    // piece by exactly one cell. `das_start` / `das_release` below remain as
-    // harmless no-ops so existing callers and the persisted `das`/`arr` settings
-    // stay valid for backward compatibility.
 
     fn is_grounded(&self, piece: ActivePiece) -> bool {
         collides(&self.board, piece.moved(0, 1))
@@ -486,6 +462,8 @@ impl Game {
             }
         }
 
+        self.gravity_acc = 0.0;
+        self.lock_timer = None;
         self.last_lock_was_tspin = kind.is_tspin();
         self.last_action_was_rotate = false;
 
@@ -510,9 +488,6 @@ impl Game {
     /// Advance combo / B2B state and add to the score for a line clear (or
     /// non-clear lock).
     fn score_lines(&mut self, lines: u32, spin: SpecialKind, perfect_clear: bool) {
-        let gp = &self.settings.gameplay;
-        let _ = gp;
-
         let base_level = self.level.max(1) as u64;
 
         if lines == 0 {

@@ -11,14 +11,15 @@
     "restart": "R"
   },
   "gameplay": {
-    "starting_level": 9,
+    "starting_level": 1,
     "das": 133,
     "arr": 20,
     "soft_drop_factor": 20,
     "lock_delay_ms": 500,
     "max_lock_resets": 15,
     "show_ghost": true,
-    "show_fps": false
+    "show_fps": false,
+    "grid_scale": 1
   },
   "stats": {
     "games_played": 0,

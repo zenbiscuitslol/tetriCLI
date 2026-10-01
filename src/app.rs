@@ -6,9 +6,9 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::game::{DaspDirection, Game};
+use crate::game::Game;
 use crate::input::Action;
 use crate::menu::{BindingCapture, Menu, MenuKind};
 use crate::save;
@@ -36,14 +36,18 @@ pub struct App {
     settings: Settings,
     menu: Menu,
     game: Option<Game>,
-    last_tick: Instant,
     fps_avg: f64,
     fps_samples: f64,
     last_fps_update: Instant,
-    }
+    /// Whether the terminal reports key-release events (kitty protocol).
+    has_key_release: bool,
+}
 
 const TICK_MS: u64 = crate::game::DT_MS;
 const TICK_DURATION: Duration = Duration::from_millis(TICK_MS);
+/// Soft-drop lifetime per key event when the terminal reports no releases.
+/// Longer than a typical key-repeat interval, shorter than a noticeable lag.
+const SOFT_DROP_PULSE_MS: u64 = 120;
 
 impl App {
     /// Construct using on-disk settings (creating defaults if absent).
@@ -57,10 +61,10 @@ impl App {
             settings,
             game: None,
             menu,
-            last_tick: Instant::now(),
             fps_avg: 0.0,
             fps_samples: 0.0,
             last_fps_update: Instant::now(),
+            has_key_release: false,
         }
     }
 
@@ -99,32 +103,57 @@ impl App {
     /// Run the event loop. Returns when the user quits. Any terminal setup
     /// errors are returned to `main` for display.
     pub fn run(&mut self, terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>) -> std::io::Result<()> {
-        self.last_tick = Instant::now();
+        self.has_key_release = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
         self.last_fps_update = Instant::now();
+        let mut next_tick = Instant::now() + TICK_DURATION;
         loop {
+            // Sleep until the next tick or an input event, whichever is first,
+            // then drain every queued event before simulating and drawing.
+            let mut timeout = next_tick.saturating_duration_since(Instant::now());
+            while event::poll(timeout)? {
+                if self.handle_event(event::read()?) {
+                    return Ok(());
+                }
+                timeout = Duration::ZERO;
+            }
+
+            // Fixed-timestep simulation: catch up on missed ticks (bounded so a
+            // long stall can't trigger a spiral of death).
+            let now = Instant::now();
+            let mut steps = 0;
+            while now >= next_tick && steps < 5 {
+                self.tick();
+                next_tick += TICK_DURATION;
+                steps += 1;
+            }
+            if now >= next_tick {
+                next_tick = now + TICK_DURATION;
+            }
+
             self.render(terminal)?;
-            let timeout = TICK_DURATION
-                .checked_sub(self.last_tick.elapsed())
-                .unwrap_or(TICK_DURATION);
-            if event::poll(timeout)? {
-                match event::read()? {
-                    Event::Key(ev) if ev.kind == KeyEventKind::Press => {
-                        let should_quit = self.handle_key(ev);
-                        if should_quit {
-                            return Ok(());
+        }
+    }
+
+    /// Dispatch one terminal event. Returns `true` if the app should quit.
+    fn handle_event(&mut self, ev: Event) -> bool {
+        match ev {
+            Event::Key(key) => match key.kind {
+                KeyEventKind::Press => return self.handle_key(key),
+                // Auto-repeat keeps soft drop alive and re-fires movement keys.
+                KeyEventKind::Repeat => {
+                    if self.screen == Screen::Gameplay {
+                        if let Some(a @ (Action::MoveLeft | Action::MoveRight | Action::SoftDrop)) =
+                            self.match_gameplay_action(&key)
+                        {
+                            self.dispatch_gameplay_action(a);
                         }
                     }
-                    Event::Key(ev) if ev.kind == KeyEventKind::Release => {
-                        self.handle_key_release(ev);
-                    }
-                    Event::Resize(..) => {
-                        // Ratatui handles redraw automatically on next render.
-                    }
-                    _ => {}
                 }
-            }
-            self.tick();
+                KeyEventKind::Release => self.handle_key_release(key),
+            },
+            _ => {}
         }
+        false
     }
 
     fn render(&mut self, terminal: &mut ratatui::Terminal<impl ratatui::backend::Backend>) -> std::io::Result<()> {
@@ -134,35 +163,39 @@ impl App {
         Ok(())
     }
 
+    /// Advance the simulation by one fixed step.
     fn tick(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_tick);
-        if elapsed >= TICK_DURATION {
-            self.last_tick = now;
-            if self.screen == Screen::Gameplay {
-                if let Some(game) = self.game.as_mut() {
-                    game.tick();
-                    if game.game_over {
-                        self.settings.stats.games_played += 1;
-                        self.settings.stats.total_lines += game.total_lines as u64;
-                        self.settings.stats.best_score = self.settings.stats.best_score.max(game.score);
-                        self.settings.stats.best_level = self.settings.stats.best_level.max(game.level);
-                        self.settings.stats.total_playtime_secs += game.start_time.elapsed().as_secs_f64();
-                        save::save(&self.settings).ok();
-                        self.enter(Screen::GameOver);
-                        self.menu.set_kind(MenuKind::GameOver, &self.settings);
-                    }
+        if self.screen == Screen::Gameplay {
+            if let Some(game) = self.game.as_mut() {
+                game.tick();
+                if game.game_over {
+                    self.record_game_over();
                 }
             }
-            // FPS smoothing.
-            self.fps_samples += 1.0;
-            if now.duration_since(self.last_fps_update) >= Duration::from_millis(500) {
-                let interval = now.duration_since(self.last_fps_update).as_secs_f64().max(0.001);
-                self.fps_avg = self.fps_samples / interval;
-                self.fps_samples = 0.0;
-                self.last_fps_update = now;
-            }
         }
+
+        // FPS smoothing (counts simulation-synchronised frames).
+        let now = Instant::now();
+        self.fps_samples += 1.0;
+        let interval = now.duration_since(self.last_fps_update);
+        if interval >= Duration::from_millis(500) {
+            self.fps_avg = self.fps_samples / interval.as_secs_f64();
+            self.fps_samples = 0.0;
+            self.last_fps_update = now;
+        }
+    }
+
+    fn record_game_over(&mut self) {
+        let Some(game) = self.game.as_ref() else { return };
+        let stats = &mut self.settings.stats;
+        stats.games_played += 1;
+        stats.total_lines += game.total_lines as u64;
+        stats.best_score = stats.best_score.max(game.score);
+        stats.best_level = stats.best_level.max(game.level);
+        stats.total_playtime_secs += game.start_time.elapsed().as_secs_f64();
+        save::save(&self.settings).ok();
+        self.enter(Screen::GameOver);
+        self.menu.set_kind(MenuKind::GameOver, &self.settings);
     }
 
     fn enter(&mut self, screen: Screen) {
@@ -182,6 +215,12 @@ impl App {
     /// Process a key event for the current screen. Returns `true` if the app
     /// should quit.
     fn handle_key(&mut self, ev: KeyEvent) -> bool {
+        // Ctrl+C / Ctrl+D quit from anywhere, including mid-game.
+        if ev.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(ev.code, KeyCode::Char('c' | 'd' | 'C' | 'D'))
+        {
+            return true;
+        }
         // Splash: any key goes to the main menu.
         if self.screen == Screen::Splash {
             self.screen = Screen::MainMenu;
@@ -201,12 +240,13 @@ impl App {
 
         // Gameplay actions are bound keys first; pause key leaves gameplay.
         if self.screen == Screen::Gameplay {
-            if let Some(action) = self.match_gameplay_action(&ev) {
+            let action = self.match_gameplay_action(&ev).or(match ev.code {
+                KeyCode::Esc => Some(Action::Pause),
+                _ => None,
+            });
+            if let Some(action) = action {
                 self.dispatch_gameplay_action(action);
-                return false;
             }
-            // In-game unbound movement keys still low-level drive DAS/ARR; for
-            // bound keys we already returned above. Unreachable in practice.
             return false;
         }
 
@@ -222,21 +262,18 @@ impl App {
         }
     }
 
-    fn navigate_menu(&mut self, ev: KeyEvent, len: usize) -> bool {
+    fn navigate_menu(&mut self, ev: KeyEvent) {
         match ev.code {
             KeyCode::Up => self.menu.up(),
             KeyCode::Down => self.menu.down(),
-            KeyCode::Enter => return true,
             KeyCode::Char('k') => self.menu.up(),
             KeyCode::Char('j') => self.menu.down(),
             _ => {}
         }
-        let _ = len;
-        false
     }
 
     fn handle_main_menu(&mut self, ev: KeyEvent) -> bool {
-        let _ = self.navigate_menu(ev, MenuKind::Main.len());
+        self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
                 0 => self.start_game(),
@@ -259,7 +296,7 @@ impl App {
     }
 
     fn handle_settings_menu(&mut self, ev: KeyEvent) -> bool {
-        let _ = self.navigate_menu(ev, MenuKind::Settings.len());
+        self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
                 0 => {
@@ -281,7 +318,7 @@ impl App {
     }
 
     fn handle_controls_menu(&mut self, ev: KeyEvent) -> bool {
-        let _ = self.navigate_menu(ev, MenuKind::Controls.len());
+        self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             self.menu.start_rebind();
         } else if ev.code == KeyCode::Esc {
@@ -295,8 +332,7 @@ impl App {
     /// Grid Scale). Up/Down selects an option; Left/Right or Enter cycles its
     /// value; Esc returns to the Settings menu.
     fn handle_gameplay_settings_menu(&mut self, ev: KeyEvent) -> bool {
-        let len = MenuKind::Gameplay.len();
-        let _ = self.navigate_menu(ev, len);
+        self.navigate_menu(ev);
         let idx = self.menu.selected();
         match ev.code {
             KeyCode::Left => self.cycle_gameplay_option(idx, false),
@@ -335,7 +371,7 @@ impl App {
     }
 
     fn handle_pause_menu(&mut self, ev: KeyEvent) -> bool {
-        let _ = self.navigate_menu(ev, MenuKind::Pause.len());
+        self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
                 0 => self.screen = Screen::Gameplay,
@@ -357,7 +393,7 @@ impl App {
     }
 
     fn handle_game_over_menu(&mut self, ev: KeyEvent) -> bool {
-        let _ = self.navigate_menu(ev, MenuKind::GameOver.len());
+        self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
                 0 => self.start_game(),
@@ -427,7 +463,11 @@ impl App {
                 game.shift(1);
             }
             Action::SoftDrop => {
-                game.set_soft_dropping(true);
+                if self.has_key_release {
+                    game.set_soft_dropping(true);
+                } else {
+                    game.soft_drop_pulse(SOFT_DROP_PULSE_MS);
+                }
             }
             Action::HardDrop => {
                 game.hard_drop();
@@ -442,7 +482,7 @@ impl App {
                 game.try_hold();
             }
             Action::Pause => {
-                self.enter(Screen::Paused);
+                self.screen = Screen::Paused;
                 self.menu.set_kind(MenuKind::Pause, &self.settings);
             }
             Action::Restart => {
@@ -451,32 +491,13 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
-    fn clear_das_left(&self, game: &mut Game) {
-        game.das_release(DaspDirection::Left);
-    }
-
-    #[allow(dead_code)]
-    fn clear_das_right(&self, game: &mut Game) {
-        game.das_release(DaspDirection::Right);
-    }
-
-    /// Handle a key release: stops DAS in the released direction and ends soft
-    /// drop if the soft-drop key was let go.
+    /// Handle a key release: ends soft drop if the soft-drop key was let go.
     fn handle_key_release(&mut self, ev: KeyEvent) {
         if self.screen != Screen::Gameplay {
             return;
         }
         let Some(game) = self.game.as_mut() else { return };
-        let left = &self.settings.controls.move_left;
-        let right = &self.settings.controls.move_right;
         let soft = &self.settings.controls.soft_drop;
-        if crate::input::matches_binding(&ev, left) {
-            game.das_release(DaspDirection::Left);
-        }
-        if crate::input::matches_binding(&ev, right) {
-            game.das_release(DaspDirection::Right);
-        }
         if crate::input::matches_binding(&ev, soft) {
             game.set_soft_dropping(false);
         }

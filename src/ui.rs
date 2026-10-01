@@ -1,13 +1,11 @@
-//! Widget-level UI rendering helpers: block (box) drawing, color mapping for
-//! tetrominoes, and a few small composite widgets shared by the renderer and
-//! menus.
+//! Color mapping and block painting shared by the playfield and HUD previews.
 
+use ratatui::buffer::{Buffer, Cell};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
 
 use crate::piece::Tetromino;
 
-/// Returns the canonical Guideline cell color for a tetromino.
+/// Canonical Guideline color for a tetromino.
 pub fn tetromino_color(kind: Tetromino) -> Color {
     match kind {
         Tetromino::I => Color::Cyan,
@@ -20,23 +18,37 @@ pub fn tetromino_color(kind: Tetromino) -> Color {
     }
 }
 
-/// The block glyph used for filled cells (a full block plus a subtle inset).
-pub const BLOCK: &str = "█";
+const BLOCK: char = '█';
+const GHOST: char = '▒';
 
-/// A single-character, dimmer glyph used for ghost pieces.
-pub const GHOST: &str = "▒";
-
-/// A centered title bar for bordered widgets.
-#[allow(dead_code)]
-pub fn title<'a>(text: &'a str) -> Line<'a> {
-    Line::from(Span::styled(
-        text.to_string(),
-        Style::default().add_modifier(Modifier::BOLD),
-    ))
+/// How a block should be drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BlockStyle {
+    Solid,
+    Ghost,
+    /// Greyed out (e.g. hold already used this turn).
+    Disabled,
 }
 
-/// Style a string with the tetromino's color (used for the hold/next previews).
-#[allow(dead_code)]
-pub fn colored(text: &str, kind: Tetromino) -> Span<'_> {
-    Span::styled(text.to_string(), Style::default().fg(tetromino_color(kind)))
+/// Bounds-checked cell access, so oversized layouts clip instead of panicking.
+fn cell_at(buf: &mut Buffer, x: u16, y: u16) -> Option<&mut Cell> {
+    let a = buf.area;
+    (x >= a.left() && x < a.right() && y >= a.top() && y < a.bottom()).then(|| buf.get_mut(x, y))
+}
+
+/// Paint one solid `w`x`h` block at `(x, y)`. Terminal cells are about twice
+/// as tall as wide, so callers use `w = 2 * h` for classic square blocks.
+pub fn paint_block(buf: &mut Buffer, x: u16, y: u16, w: u16, h: u16, kind: Tetromino, style: BlockStyle) {
+    let (ch, st) = match style {
+        BlockStyle::Solid => (BLOCK, Style::default().fg(tetromino_color(kind)).add_modifier(Modifier::BOLD)),
+        BlockStyle::Ghost => (GHOST, Style::default().fg(Color::DarkGray)),
+        BlockStyle::Disabled => (BLOCK, Style::default().fg(Color::DarkGray)),
+    };
+    for row in 0..h {
+        for col in 0..w {
+            if let Some(cell) = cell_at(buf, x + col, y + row) {
+                cell.set_char(ch).set_style(st);
+            }
+        }
+    }
 }
