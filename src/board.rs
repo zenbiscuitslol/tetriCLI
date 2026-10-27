@@ -126,6 +126,13 @@ impl Board {
         crate::piece::collides(piece, &|x, y| self.filled(x, y))
     }
 
+    /// Fill a single cell directly (test setup only).
+    #[cfg(test)]
+    pub fn set(&mut self, x: i32, y: i32, kind: Tetromino) {
+        self.cells[y as usize][x as usize] = Cell(Some(kind));
+        self.highest_row = self.highest_row.min(y as usize);
+    }
+
     /// Read-only access to the raw cell grid for rendering.
     pub fn cells(&self) -> &[Vec<Cell>] {
         &self.cells

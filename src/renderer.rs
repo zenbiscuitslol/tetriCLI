@@ -12,7 +12,7 @@ use ratatui::Frame;
 
 use crate::app::Screen;
 use crate::board::Board;
-use crate::game::{Game, SpecialKind};
+use crate::game::{Game, GameMode, SpecialKind, SPRINT_LINES};
 use crate::menu::Menu;
 use crate::piece::{ActivePiece, Rotation, FIELD_COLS, FIELD_ROWS, HIDDEN_ROWS};
 use crate::settings::Settings;
@@ -33,6 +33,7 @@ pub fn render(
     match screen {
         Screen::Splash => render_splash(frame),
         Screen::MainMenu => render_main_menu(frame, menu),
+        Screen::ModeSelect => render_mode_select(frame, menu),
         Screen::Settings => render_settings(frame, menu),
         Screen::Controls => render_controls(frame, menu),
         Screen::GameplaySettings => render_gameplay_settings(frame, menu, settings),
@@ -50,7 +51,7 @@ pub fn render(
         Screen::GameOver => {
             if let Some(game) = game {
                 render_game(frame, game);
-                render_game_over_overlay(frame, game, menu);
+                render_game_over_overlay(frame, game, menu, settings);
             }
         }
         Screen::Stats => render_stats(frame, menu, settings),
@@ -148,6 +149,16 @@ fn render_main_menu(frame: &mut Frame, menu: &Menu) {
         );
         cur_y += line_h + gap;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Game mode select
+// ---------------------------------------------------------------------------
+
+fn render_mode_select(frame: &mut Frame, menu: &Menu) {
+    let area = frame.size();
+    let items = ["Classic", "40 Lines"];
+    render_simple_menu(frame, area, "Play", &items, menu.selected());
 }
 
 // ---------------------------------------------------------------------------
@@ -330,11 +341,12 @@ fn render_stats(frame: &mut Frame, menu: &Menu, settings: &Settings) {
     let _ = menu;
     let area = frame.size();
     let s = &settings.stats;
-    let rows: [(&str, String); 5] = [
+    let rows: [(&str, String); 6] = [
         ("Games played", s.games_played.to_string()),
         ("Total lines cleared", s.total_lines.to_string()),
         ("Best score", s.best_score.to_string()),
         ("Best level", s.best_level.to_string()),
+        ("Best 40 Lines", s.best_sprint_secs.map_or("—".to_string(), format_sprint_time)),
         ("Total playtime", format_playtime(s.total_playtime_secs)),
     ];
 
@@ -526,11 +538,22 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
         .title(Span::styled(" Stats ", Style::default().fg(Color::Cyan)));
     frame.render_widget(stats_block.clone(), chunks[2]);
     let inner = stats_block.inner(chunks[2]);
-    let rows = [
-        ("Score", game.score.to_string()),
-        ("Level", game.level.to_string()),
-        ("Lines", game.total_lines.to_string()),
-    ];
+    let rows = match game.mode {
+        GameMode::Classic => [
+            ("Score", game.score.to_string()),
+            ("Level", game.level.to_string()),
+            ("Lines", game.total_lines.to_string()),
+        ],
+        GameMode::Sprint => {
+            let secs = game.elapsed().as_secs_f64();
+            let pps = if secs > 0.0 { game.pieces_placed as f64 / secs } else { 0.0 };
+            [
+                ("Lines", format!("{}/{SPRINT_LINES}", game.total_lines.min(SPRINT_LINES))),
+                ("Pieces", game.pieces_placed.to_string()),
+                ("PPS", format!("{pps:.2}")),
+            ]
+        }
+    };
     let mut y = inner.y;
     let side_w = inner.width / 2;
     for (k, v) in &rows {
@@ -559,7 +582,10 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
     let rows = [
         ("Combo", if combo > 1 { format!("{combo}x") } else { "—".to_string() }),
         ("B2B", if game.back_to_back { "YES".to_string() } else { "—" .to_string() }),
-        ("Time", format_playtime(game.start_time.elapsed().as_secs_f64())),
+        ("Time", match game.mode {
+            GameMode::Classic => format_playtime(game.elapsed().as_secs_f64()),
+            GameMode::Sprint => format_sprint_time(game.elapsed().as_secs_f64()),
+        }),
     ];
     let mut y = inner.y;
     let side_w = inner.width / 2;
@@ -629,10 +655,20 @@ fn render_pause_overlay(frame: &mut Frame, menu: &Menu) {
     overlay_menu(frame, area, "Paused", &items, menu.selected(), 22, 10);
 }
 
-fn render_game_over_overlay(frame: &mut Frame, game: &Game, menu: &Menu) {
+fn render_game_over_overlay(frame: &mut Frame, game: &Game, menu: &Menu, settings: &Settings) {
     let area = frame.size();
     let items = ["Play Again", "Main Menu", "Quit"];
-    let title = format!("Game Over  Score: {}", game.score);
+    let title = match game.mode {
+        GameMode::Classic => format!("Game Over  Score: {}", game.score),
+        GameMode::Sprint if game.completed => {
+            let secs = game.elapsed().as_secs_f64();
+            // Stats are recorded before this screen shows, so a run that set
+            // the record is exactly the stored best.
+            let label = if settings.stats.best_sprint_secs == Some(secs) { "New Best!" } else { "Finished" };
+            format!("{label}  {}", format_sprint_time(secs))
+        }
+        GameMode::Sprint => format!("Topped Out  {}/{SPRINT_LINES}", game.total_lines),
+    };
     overlay_menu(frame, area, &title, &items, menu.selected(), 28, 10);
 }
 
@@ -646,8 +682,9 @@ fn overlay_menu(frame: &mut Frame, area: Rect, title: &str, items: &[&str], sele
 // ---------------------------------------------------------------------------
 
 fn render_simple_menu(frame: &mut Frame, area: Rect, title: &str, items: &[&str], selected: usize) {
-    let h = items.len() as u16 + 4;
-    let w = 24u16;
+    // Borders + title + gap + items + gap + footer; wide enough for the footer.
+    let h = items.len() as u16 + 6;
+    let w = 48u16;
     let inner = block_centered(frame, area, w, h);
 
     frame.render_widget(
@@ -762,6 +799,12 @@ fn format_playtime(secs: f64) -> String {
     }
 }
 
+/// Format seconds as M:SS.mmm for sprint timing.
+fn format_sprint_time(secs: f64) -> String {
+    let ms = (secs.max(0.0) * 1000.0).round() as u64;
+    format!("{}:{:02}.{:03}", ms / 60_000, (ms / 1000) % 60, ms % 1000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,10 +819,12 @@ mod tests {
             for (w, h) in [(120, 50), (80, 24), (60, 22), (40, 12)] {
                 let mut settings = Settings::default();
                 settings.gameplay.grid_scale = scale;
-                let mut game = Game::new(settings);
-                game.hard_drop();
-                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-                term.draw(|f| render_game(f, &game)).unwrap();
+                for mode in [GameMode::Classic, GameMode::Sprint] {
+                    let mut game = Game::new(settings.clone(), mode);
+                    game.hard_drop();
+                    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                    term.draw(|f| render_game(f, &game)).unwrap();
+                }
             }
         }
     }

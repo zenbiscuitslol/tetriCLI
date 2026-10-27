@@ -3,8 +3,9 @@
 A polished, terminal-based Guideline-style Tetris clone written in Rust, rendered
 with `ratatui` and `crossterm`. All seven tetrominoes, SRS rotation with wall
 kicks, 7-bag randomizer, hold, ghost piece, lock delay, scoring with combos,
-back-to-back, T-Spin / T-Spin mini / perfect-clear detection, and a full
-menu system with persistent, rebindable controls.
+back-to-back, T-Spin / T-Spin mini / perfect-clear detection, two game modes
+(endless **Classic** and the **40 Lines** sprint), and a full menu system with
+persistent, rebindable controls.
 
 ## Build & run
 
@@ -22,8 +23,20 @@ above the top (22 rows internally). Pieces spawn at column 3 in the upright
 rotation state. The game runs a fixed 60 FPS loop (~16 ms per frame).
 
 A game ends on **block-out** (a new piece spawns into occupied cells) or
-**lock-out** (any part of a piece locks above the visible field). The final
-score, level, lines and playtime are written to your persistent statistics.
+**lock-out** (any part of a piece locks above the visible field). A 40 Lines
+run also ends as soon as the 40th line is cleared. Lines and playtime are added
+to your persistent statistics, along with your best score and level (Classic)
+or your best time (40 Lines).
+
+### Game modes
+Choosing **Play** opens the mode menu:
+
+- **Classic** — endless play from your configured starting level; levels and
+  gravity rise every 10 lines, and you're scored on points.
+- **40 Lines** — clear 40 lines as fast as you can. Gravity stays at level 1
+  regardless of the starting-level setting, and the HUD shows lines, pieces,
+  pieces-per-second and a millisecond timer. Time spent paused isn't counted.
+  Your fastest completed run is saved as **Best 40 Lines** in Statistics.
 
 ### Tetrominoes & randomizer
 All seven pieces (I, O, T, S, Z, J, L) use the Guideline color set:
@@ -149,22 +162,26 @@ full as well. The HUD flashes a banner ("T-SPIN", "T-SPIN SINGLE", …,
 - Scoring with **combos**, **back-to-back**, and **T-Spin / T-Spin Mini** detection
 - **Perfect Clear** detection and bonus scoring
 - Block-out / lock-out game-over detection
+- Two modes: **Classic** (endless, scored on points) and **40 Lines** (sprint against the clock at fixed level-1 gravity)
 
 **UI**
 - Splash screen with the tetriCLI logo
 - Centered playfield with configurable block size (`grid_scale` 1–4, default 2)
-- Right-hand HUD: Hold, Next (4 pieces), Stats (score/level/lines), Info (combo/B2B/time)
-- Last-clear banner (Singe / Double / Tetris / T-Spin … / Perfect Clear) shown for ~2s
+- Right-hand HUD: Hold, Next (4 pieces), Stats, Info (combo/B2B/time)
+  - Classic: Stats shows score/level/lines; time shown as playtime
+  - 40 Lines: Stats shows lines (x/40), pieces and pieces-per-second; time shown with millisecond precision
+- Last-clear banner (Single / Double / Tetris / T-Spin … / Perfect Clear) shown for ~2s
 - Optional FPS counter (toggle via `show_fps`)
 - Pause and Game Over overlays rendered over the live field
 
 **Menus & navigation**
 - Main menu: Play / Settings / Statistics / Quit
+- Play → mode select: Classic / 40 Lines
 - Settings → Controls (rebind any of the 9 actions, captured live and saved immediately)
 - Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4)
 - Pause menu: Resume / Restart / Main Menu / Quit
 - Game Over menu: Play Again / Main Menu / Quit
-- Statistics screen: lifetime games played, total lines, best score, best level, total playtime
+- Statistics screen: lifetime games played, total lines, best score, best level, best 40 Lines time, total playtime
 - Menu navigation is fixed (↑/↓ or `k`/`j`, Enter to select, Esc to back) and independent of the rebindable gameplay keys
 
 **Persistence**

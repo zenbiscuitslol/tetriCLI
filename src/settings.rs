@@ -55,6 +55,9 @@ pub struct Stats {
     pub best_score: u64,
     pub best_level: u32,
     pub total_playtime_secs: f64,
+    /// Fastest completed 40 Lines run, in seconds.
+    #[serde(default)]
+    pub best_sprint_secs: Option<f64>,
 }
 
 impl Default for Settings {
@@ -88,6 +91,7 @@ impl Default for Settings {
                 best_score: 0,
                 best_level: 0,
                 total_playtime_secs: 0.0,
+                best_sprint_secs: None,
             },
         }
     }

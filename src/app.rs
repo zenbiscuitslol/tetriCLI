@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::game::Game;
+use crate::game::{Game, GameMode};
 use crate::input::Action;
 use crate::menu::{BindingCapture, Menu, MenuKind};
 use crate::save;
@@ -19,6 +19,7 @@ use crate::settings::Settings;
 pub enum Screen {
     Splash,
     MainMenu,
+    ModeSelect,
     Settings,
     Controls,
     GameplaySettings,
@@ -188,11 +189,22 @@ impl App {
     fn record_game_over(&mut self) {
         let Some(game) = self.game.as_ref() else { return };
         let stats = &mut self.settings.stats;
+        let secs = game.elapsed().as_secs_f64();
         stats.games_played += 1;
         stats.total_lines += game.total_lines as u64;
-        stats.best_score = stats.best_score.max(game.score);
-        stats.best_level = stats.best_level.max(game.level);
-        stats.total_playtime_secs += game.start_time.elapsed().as_secs_f64();
+        stats.total_playtime_secs += secs;
+        match game.mode {
+            GameMode::Classic => {
+                stats.best_score = stats.best_score.max(game.score);
+                stats.best_level = stats.best_level.max(game.level);
+            }
+            GameMode::Sprint if game.completed => {
+                if stats.best_sprint_secs.map_or(true, |best| secs < best) {
+                    stats.best_sprint_secs = Some(secs);
+                }
+            }
+            GameMode::Sprint => {}
+        }
         save::save(&self.settings).ok();
         self.enter(Screen::GameOver);
         self.menu.set_kind(MenuKind::GameOver, &self.settings);
@@ -252,6 +264,7 @@ impl App {
 
         match self.screen {
             Screen::MainMenu => self.handle_main_menu(ev),
+            Screen::ModeSelect => self.handle_mode_select_menu(ev),
             Screen::Settings => self.handle_settings_menu(ev),
             Screen::Controls => self.handle_controls_menu(ev),
             Screen::GameplaySettings => self.handle_gameplay_settings_menu(ev),
@@ -276,7 +289,10 @@ impl App {
         self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
-                0 => self.start_game(),
+                0 => {
+                    self.enter(Screen::ModeSelect);
+                    self.menu.set_kind(MenuKind::ModeSelect, &self.settings);
+                }
                 1 => {
                     self.enter(Screen::Settings);
                     self.menu.set_kind(MenuKind::Settings, &self.settings);
@@ -291,6 +307,22 @@ impl App {
         if ev.code == KeyCode::Esc {
             // Esc on the main menu is also a quit affordance.
             return true;
+        }
+        false
+    }
+
+    fn handle_mode_select_menu(&mut self, ev: KeyEvent) -> bool {
+        self.navigate_menu(ev);
+        if ev.code == KeyCode::Enter {
+            match self.menu.selected() {
+                0 => self.start_game(GameMode::Classic),
+                1 => self.start_game(GameMode::Sprint),
+                _ => {}
+            }
+        }
+        if ev.code == KeyCode::Esc {
+            self.go_back();
+            self.menu.set_kind(MenuKind::Main, &self.settings);
         }
         false
     }
@@ -374,8 +406,8 @@ impl App {
         self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
-                0 => self.screen = Screen::Gameplay,
-                1 => self.start_game(),
+                0 => self.resume(),
+                1 => self.restart_game(),
                 2 => {
                     self.screen_stack.clear();
                     self.screen = Screen::MainMenu;
@@ -387,16 +419,23 @@ impl App {
             }
         }
         if ev.code == KeyCode::Esc {
-            self.screen = Screen::Gameplay;
+            self.resume();
         }
         false
+    }
+
+    fn resume(&mut self) {
+        if let Some(game) = self.game.as_mut() {
+            game.set_paused(false);
+        }
+        self.screen = Screen::Gameplay;
     }
 
     fn handle_game_over_menu(&mut self, ev: KeyEvent) -> bool {
         self.navigate_menu(ev);
         if ev.code == KeyCode::Enter {
             match self.menu.selected() {
-                0 => self.start_game(),
+                0 => self.restart_game(),
                 1 => {
                     self.screen_stack.clear();
                     self.screen = Screen::MainMenu;
@@ -423,11 +462,17 @@ impl App {
         false
     }
 
-    fn start_game(&mut self) {
-        let game = Game::new(self.settings.clone());
+    fn start_game(&mut self, mode: GameMode) {
+        let game = Game::new(self.settings.clone(), mode);
         self.game = Some(game);
         self.screen_stack.clear();
         self.screen = Screen::Gameplay;
+    }
+
+    /// Start a fresh game in the same mode as the current one.
+    fn restart_game(&mut self) {
+        let mode = self.game.as_ref().map_or(GameMode::Classic, |g| g.mode);
+        self.start_game(mode);
     }
 
     /// Identify which gameplay action `ev` maps to, if any.
@@ -482,6 +527,7 @@ impl App {
                 game.try_hold();
             }
             Action::Pause => {
+                game.set_paused(true);
                 self.screen = Screen::Paused;
                 self.menu.set_kind(MenuKind::Pause, &self.settings);
             }

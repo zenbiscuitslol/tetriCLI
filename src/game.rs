@@ -5,6 +5,7 @@
 //! detection closely following TETR.IO's modern Guideline feel.
 
 use std::cmp;
+use std::time::{Duration, Instant};
 
 use crate::board::{Board, LockOutcome};
 use crate::piece::{self, ActivePiece, Rotation, Tetromino, FIELD_COLS, FIELD_ROWS};
@@ -12,6 +13,20 @@ use crate::settings::Settings;
 
 /// Durations used by the game loop, all in milliseconds.
 pub const DT_MS: u64 = 1000 / 60;
+
+/// Lines a 40 Lines (sprint) run must clear to finish.
+pub const SPRINT_LINES: u32 = 40;
+
+/// Which ruleset a game is played under.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GameMode {
+    /// Endless play: levels and gravity rise every 10 lines; scored by points.
+    #[default]
+    Classic,
+    /// Clear [`SPRINT_LINES`] lines as fast as possible at fixed level-1
+    /// gravity; scored by time.
+    Sprint,
+}
 
 /// A compact per-frame snapshot of triggers the renderer/UX cares about, used to
 /// surface transient feedback (recent clear text, spin banners) without
@@ -82,6 +97,7 @@ impl SpecialKind {
 pub struct Game {
     pub board: Board,
     pub settings: Settings,
+    pub mode: GameMode,
 
     // Piece logistics.
     pub bag: Vec<Tetromino>,
@@ -97,8 +113,13 @@ pub struct Game {
     pub combo: Option<u32>,
     pub back_to_back: bool,
     pub pieces_placed: u64,
-    pub start_time: std::time::Instant,
     pub last_lock_was_tspin: bool,
+
+    // Run clock. Paused time is excluded and the clock freezes at game end.
+    start_time: Instant,
+    paused_at: Option<Instant>,
+    paused_total: Duration,
+    final_time: Option<Duration>,
 
     // Timing, DAS/ARR.
     gravity_ms: f64,
@@ -124,6 +145,8 @@ pub struct Game {
     // True once the current piece's spawn fully atop hidden rows would overlap
     // the field — handles block-out / lock-out top-out conditions.
     pub game_over: bool,
+    /// True when a sprint ended by reaching its line goal (not by topping out).
+    pub completed: bool,
 
     // Stats of the most recent lock (used by T-Spin detection which requires
     // "the last action was a rotation").
@@ -132,14 +155,19 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(mut settings: Settings) -> Self {
-        let level = settings.gameplay.starting_level.max(1);
+    pub fn new(mut settings: Settings, mode: GameMode) -> Self {
+        // Sprints always run at level-1 gravity so times are comparable.
+        let level = match mode {
+            GameMode::Classic => settings.gameplay.starting_level.max(1),
+            GameMode::Sprint => 1,
+        };
         // Pin the starting level back into the setting so persisted stats replay
         // the same starting speed.
         settings.gameplay.starting_level = level;
         let mut game = Self {
             board: Board::new(),
             settings,
+            mode,
             bag: Vec::new(),
             queue: Vec::new(),
             current: None,
@@ -151,8 +179,11 @@ impl Game {
             combo: None,
             back_to_back: false,
             pieces_placed: 0,
-            start_time: std::time::Instant::now(),
             last_lock_was_tspin: false,
+            start_time: Instant::now(),
+            paused_at: None,
+            paused_total: Duration::ZERO,
+            final_time: None,
             gravity_ms: gravity_for_level(level),
             gravity_acc: 0.0,
             soft_dropping: false,
@@ -164,6 +195,7 @@ impl Game {
             events: EventLog::default(),
             clear_banner_timer: 0,
             game_over: false,
+            completed: false,
             last_action_was_rotate: false,
             last_rotation_kick: 0,
         };
@@ -174,10 +206,39 @@ impl Game {
         game
     }
 
-    /// Reset to a fresh game keeping the same settings (used by "Restart").
+    /// Reset to a fresh game keeping the same settings and mode (used by
+    /// "Restart").
     pub fn reset(&mut self) {
         let settings = self.settings.clone();
-        *self = Self::new(settings);
+        *self = Self::new(settings, self.mode);
+    }
+
+    /// Time spent playing, excluding pauses. Frozen once the game ends.
+    pub fn elapsed(&self) -> Duration {
+        if let Some(t) = self.final_time {
+            return t;
+        }
+        let now = self.paused_at.unwrap_or_else(Instant::now);
+        now.duration_since(self.start_time).saturating_sub(self.paused_total)
+    }
+
+    /// Stop or restart the run clock when the game is paused or resumed.
+    pub fn set_paused(&mut self, paused: bool) {
+        match (paused, self.paused_at) {
+            (true, None) => self.paused_at = Some(Instant::now()),
+            (false, Some(at)) => {
+                self.paused_total += at.elapsed();
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// End the game, freezing the clock.
+    fn end(&mut self) {
+        self.final_time = Some(self.elapsed());
+        self.current = None;
+        self.game_over = true;
     }
 
     /// Refill the bag with all 7 tetrominoes in a random order.
@@ -221,8 +282,7 @@ impl Game {
         self.spawn_delay = 0;
         self.gravity_acc = 0.0;
         if self.board.blocked_at_spawn(piece) {
-            self.current = None;
-            self.game_over = true;
+            self.end();
             return false;
         }
         self.current = Some(piece);
@@ -434,7 +494,7 @@ impl Game {
 
         let outcome = self.board.lock(piece);
         if matches!(outcome, LockOutcome::TopOut) {
-            self.game_over = true;
+            self.end();
             return;
         }
         self.pieces_placed += 1;
@@ -451,6 +511,8 @@ impl Game {
 
         if lines > 0 {
             self.total_lines += lines;
+        }
+        if lines > 0 && self.mode == GameMode::Classic {
             // Level progression: every 10 lines.
             let new_level = cmp::max(
                 self.settings.gameplay.starting_level,
@@ -476,6 +538,12 @@ impl Game {
         self.events.last_b2b = self.back_to_back;
         self.events.last_combo = self.combo.unwrap_or(0);
         self.events.last_special = special;
+
+        if self.mode == GameMode::Sprint && self.total_lines >= SPRINT_LINES {
+            self.completed = true;
+            self.end();
+            return;
+        }
 
         // A short spawn delay (ARE-like grace) keeps the next piece from spawning
         // on the same frame, matching TETR.IO feel.
@@ -732,4 +800,62 @@ fn describe_clear(special: SpecialKind, lines: u32, perfect: bool) -> Option<Str
         SpecialKind::None => return None,
     };
     Some(s.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fill the bottom row everywhere the current piece won't land, so the
+    /// next hard drop clears exactly one line.
+    fn prime_single_clear(game: &mut Game) {
+        let ghost = game.ghost().unwrap().cells();
+        let bottom = FIELD_ROWS as i32 - 1;
+        for x in 0..FIELD_COLS as i32 {
+            if !ghost.contains(&(x, bottom)) {
+                game.board.set(x, bottom, Tetromino::I);
+            }
+        }
+    }
+
+    #[test]
+    fn sprint_finishes_at_line_goal_and_freezes_clock() {
+        let mut game = Game::new(Settings::default(), GameMode::Sprint);
+        game.total_lines = SPRINT_LINES - 1;
+        prime_single_clear(&mut game);
+        game.hard_drop();
+        assert!(game.game_over && game.completed);
+        let t = game.elapsed();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(game.elapsed(), t);
+    }
+
+    #[test]
+    fn sprint_ignores_starting_level() {
+        let mut settings = Settings::default();
+        settings.gameplay.starting_level = 15;
+        let game = Game::new(settings, GameMode::Sprint);
+        assert_eq!(game.level, 1);
+    }
+
+    #[test]
+    fn classic_continues_past_forty_lines() {
+        let mut game = Game::new(Settings::default(), GameMode::Classic);
+        game.total_lines = SPRINT_LINES - 1;
+        prime_single_clear(&mut game);
+        game.hard_drop();
+        assert!(!game.game_over && !game.completed);
+        assert_eq!(game.level, 5);
+    }
+
+    #[test]
+    fn paused_time_is_not_counted() {
+        let mut game = Game::new(Settings::default(), GameMode::Sprint);
+        game.set_paused(true);
+        let t = game.elapsed();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(game.elapsed(), t);
+        game.set_paused(false);
+        assert!(game.elapsed() < t + Duration::from_millis(5));
+    }
 }
