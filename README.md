@@ -164,9 +164,14 @@ secondary key, Enter rebinds it and Backspace/Delete clears a secondary key.
 Secondary keys are stored under `controls_secondary` in `settings.json`
 (an empty string means unbound).
 
-> Movement is one cell per key press (auto-repeat / DAS-ARR is intentionally
-> disabled). The `das`/`arr` settings remain in the JSON for backward
-> compatibility but are not used by the gameplay loop.
+> Holding Move Left/Right repeats the move. With **Fast Movement** (Settings →
+> Gameplay, on by default) it repeats every 130 ms from the start, with no
+> ramp-up; a tap still moves one cell. With it off, the move waits 200 ms and
+> then repeats every 50 ms. This needs a terminal that reports key releases
+> (kitty-protocol terminals such as kitty, WezTerm, foot or Ghostty);
+> elsewhere, held moves follow your OS key-repeat delay and rate. The
+> `das`/`arr` values in `settings.json` are kept for backward compatibility
+> but are not used.
 
 ## Features
 
@@ -185,6 +190,7 @@ Secondary keys are stored under `controls_secondary` in `settings.json`
 **UI**
 - Splash screen with the tetriCLI logo
 - Centered playfield with configurable block size (`grid_scale` 1–4, default 2), framed by a thin border the blocks sit flush against
+  - **Block Width**: *Normal* draws each block 2 chars wide per scale step; *Wide* uses 3/5/7/10 chars at scales 1–4, for fonts (or line-height tweaks) where character cells are more than twice as tall as they are wide and Normal blocks look tall and narrow
 - Guideline-style HUD: Hold, Stats and Info on the left; Next (4 pieces, spaced apart) on the right
   - Classic: Stats shows score/level/lines; time shown as playtime
   - 40 Lines: Stats shows lines (x/40), pieces and pieces-per-second; time shown with millisecond precision
@@ -197,7 +203,7 @@ Secondary keys are stored under `controls_secondary` in `settings.json`
 - Main menu: Play / Settings / Statistics / Quit
 - Play → mode select: Classic / 40 Lines / Blitz
 - Settings → Controls (primary + secondary key for each of the 9 actions, captured live and saved immediately)
-- Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4, Soft Drop Speed 2×–40×)
+- Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4, Soft Drop Speed 2×–40×, Block Width Normal/Wide, Fast Movement On/Off)
 - Pause menu: Resume / Restart / Main Menu / Quit
 - Game Over menu: Play Again / Main Menu / Quit
 - Statistics screen: lifetime games played, total lines, best score, best level, best 40 Lines time, best Blitz score, total playtime

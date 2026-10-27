@@ -27,7 +27,7 @@ impl MenuKind {
             Self::ModeSelect => 3,
             Self::Settings => 3,
             Self::Controls => 9,
-            Self::Gameplay => 3,
+            Self::Gameplay => 5,
             Self::Pause => 4,
             Self::GameOver => 3,
         }

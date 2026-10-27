@@ -47,6 +47,14 @@ pub struct Gameplay {
     /// Range 1..=4. Default 2 (each block is 2 chars wide).
     #[serde(default = "default_grid_scale")]
     pub grid_scale: u32,
+    /// Draw blocks ~2.5 chars wide per scale step instead of 2, for fonts whose
+    /// cells are more than twice as tall as they are wide.
+    #[serde(default)]
+    pub wide_blocks: bool,
+    /// Held left/right moves repeat at one steady speed instead of pausing
+    /// first and then speeding up.
+    #[serde(default = "default_fast_movement")]
+    pub fast_movement: bool,
 }
 
 fn default_controls_secondary() -> Controls {
@@ -55,6 +63,10 @@ fn default_controls_secondary() -> Controls {
 
 fn default_grid_scale() -> u32 {
     1
+}
+
+fn default_fast_movement() -> bool {
+    true
 }
 
 /// Persisted lifetime statistics.
@@ -98,6 +110,8 @@ impl Default for Settings {
                 show_ghost: true,
                 show_fps: false,
                 grid_scale: 1,
+                wide_blocks: false,
+                fast_movement: true,
             },
             stats: Stats {
                 games_played: 0,

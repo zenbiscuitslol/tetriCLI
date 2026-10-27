@@ -30,6 +30,14 @@ const BLITZ_WARNINGS: [(Duration, &str); 3] = [
 /// How long each Blitz warning stays on screen.
 const BLITZ_WARNING_SHOW: Duration = Duration::from_secs(2);
 
+/// Fast Movement: a held move repeats every this many ms, from the first
+/// repeat on. Long enough that a normal tap still moves a single cell.
+const FAST_SHIFT_MS: u64 = 130;
+/// Without Fast Movement: delay before a held move starts repeating...
+const SHIFT_DELAY_MS: u64 = 200;
+/// ...and the interval between repeats after that.
+const SHIFT_REPEAT_MS: u64 = 50;
+
 /// Which ruleset a game is played under.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GameMode {
@@ -144,6 +152,12 @@ pub struct Game {
     /// Remaining ms of soft drop when the terminal sends no key-release events;
     /// key-repeat presses keep refreshing it. `None` means "until released".
     soft_drop_ttl: Option<u64>,
+    /// Direction of the held left/right key, auto-repeated by `tick`. Only set
+    /// when the terminal reports key releases.
+    held_shift: Option<i32>,
+    shift_timer: u64,
+    /// True once the held move is past its initial delay.
+    shift_repeating: bool,
 
     // Lock delay.
     lock_timer: Option<u64>,
@@ -205,6 +219,9 @@ impl Game {
             gravity_acc: 0.0,
             soft_dropping: false,
             soft_drop_ttl: None,
+            held_shift: None,
+            shift_timer: 0,
+            shift_repeating: false,
             lock_timer: None,
             lock_resets: 0,
             on_ground: false,
@@ -241,6 +258,11 @@ impl Game {
 
     /// Stop or restart the run clock when the game is paused or resumed.
     pub fn set_paused(&mut self, paused: bool) {
+        // The key may be released while the pause menu is open; don't let the
+        // piece keep sliding on resume.
+        if paused {
+            self.held_shift = None;
+        }
         match (paused, self.paused_at) {
             (true, None) => self.paused_at = Some(Instant::now()),
             (false, Some(at)) => {
@@ -361,6 +383,39 @@ impl Game {
         }
     }
 
+    /// A left/right key went down: move once now and keep repeating in `tick`
+    /// until [`Game::release_shift`].
+    pub fn press_shift(&mut self, dx: i32) {
+        self.shift(dx);
+        self.held_shift = Some(dx);
+        self.shift_timer = 0;
+        self.shift_repeating = false;
+    }
+
+    /// A left/right key was released.
+    pub fn release_shift(&mut self, dx: i32) {
+        if self.held_shift == Some(dx) {
+            self.held_shift = None;
+        }
+    }
+
+    /// Repeat the held move: after the initial delay, then every interval.
+    fn auto_shift(&mut self) {
+        let Some(dx) = self.held_shift else { return };
+        let (delay, interval) = if self.settings.gameplay.fast_movement {
+            (FAST_SHIFT_MS, FAST_SHIFT_MS)
+        } else {
+            (SHIFT_DELAY_MS, SHIFT_REPEAT_MS)
+        };
+        self.shift_timer += DT_MS;
+        let due = if self.shift_repeating { interval } else { delay };
+        if self.shift_timer >= due {
+            self.shift_timer -= due;
+            self.shift_repeating = true;
+            self.shift(dx);
+        }
+    }
+
     /// Drop the piece one row if possible. Returns whether it moved.
     pub fn soft_drop_step(&mut self) -> bool {
         let Some(piece) = self.current else { return false };
@@ -468,6 +523,9 @@ impl Game {
                 self.events.last_clear_text = None;
             }
         }
+
+        // Keeps charging between pieces, so a held key carries over.
+        self.auto_shift();
 
         if self.spawn_delay > 0 {
             self.spawn_delay = self.spawn_delay.saturating_sub(DT_MS);
@@ -952,6 +1010,57 @@ mod tests {
         game.hard_drop();
         assert_eq!(game.level, 2);
         assert!(game.score > 0 && !game.game_over);
+    }
+
+    #[test]
+    fn fast_movement_repeats_at_a_steady_rate() {
+        let mut game = Game::new(Settings::default(), GameMode::Classic);
+        let x0 = game.current.unwrap().x;
+        game.press_shift(1);
+        assert_eq!(game.current.unwrap().x, x0 + 1);
+        for _ in 0..FAST_SHIFT_MS / DT_MS {
+            game.tick();
+        }
+        assert_eq!(game.current.unwrap().x, x0 + 1);
+        game.tick();
+        assert_eq!(game.current.unwrap().x, x0 + 2);
+        game.release_shift(1);
+        for _ in 0..20 {
+            game.tick();
+        }
+        assert_eq!(game.current.unwrap().x, x0 + 2);
+    }
+
+    #[test]
+    fn normal_movement_waits_then_repeats_faster() {
+        let mut settings = Settings::default();
+        settings.gameplay.fast_movement = false;
+        let mut game = Game::new(settings, GameMode::Classic);
+        let x0 = game.current.unwrap().x;
+        game.press_shift(1);
+        for _ in 0..SHIFT_DELAY_MS / DT_MS {
+            game.tick();
+        }
+        assert_eq!(game.current.unwrap().x, x0 + 1);
+        game.tick();
+        assert_eq!(game.current.unwrap().x, x0 + 2);
+        for _ in 0..SHIFT_REPEAT_MS.div_ceil(DT_MS) {
+            game.tick();
+        }
+        assert_eq!(game.current.unwrap().x, x0 + 3);
+    }
+
+    #[test]
+    fn pausing_stops_held_movement() {
+        let mut game = Game::new(Settings::default(), GameMode::Classic);
+        let x0 = game.current.unwrap().x;
+        game.press_shift(-1);
+        game.set_paused(true);
+        game.set_paused(false);
+        for _ in 0..20 {
+            game.tick();
+        }
+        assert_eq!(game.current.unwrap().x, x0 - 1);
     }
 
     #[test]

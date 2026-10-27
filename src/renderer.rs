@@ -184,11 +184,15 @@ fn render_gameplay_settings(frame: &mut Frame, menu: &Menu, settings: &Settings)
     let level = settings.gameplay.starting_level;
     let scale = settings.gameplay.grid_scale.clamp(1, 4);
     let soft_drop = settings.gameplay.soft_drop_factor;
+    let block_width = if settings.gameplay.wide_blocks { "Wide" } else { "Normal" };
+    let fast_movement = if settings.gameplay.fast_movement { "On" } else { "Off" };
 
-    let rows: [(&str, String); 3] = [
+    let rows: [(&str, String); 5] = [
         ("Starting Level", level.to_string()),
         ("Grid Scale", format!("{scale}x")),
         ("Soft Drop Speed", format!("{soft_drop}x")),
+        ("Block Width", block_width.to_string()),
+        ("Fast Movement", fast_movement.to_string()),
     ];
 
     let width = area.width.min(42);
@@ -441,14 +445,19 @@ const FLUSH_BORDER: border::Set = border::Set {
     horizontal_bottom: "▔",
 };
 
+/// Block width in chars at grid scales 1–4 with "Wide" blocks: the nearest
+/// whole number to 2.5 chars per row of block height.
+const WIDE_CELL_W: [u16; 4] = [3, 5, 7, 10];
+
 fn cell_dims(game: &Game, area: Rect) -> (u16, u16) {
     let scale = game.settings.gameplay.grid_scale.clamp(1, 4) as u16;
+    let want_w = if game.settings.gameplay.wide_blocks { WIDE_CELL_W[scale as usize - 1] } else { scale * 2 };
     let margin = 4u16;
     let max_field_inner_w = area.width.saturating_sub(2 * (HUD_W + HUD_GAP) + margin + 2);
     let max_field_inner_h = area.height.saturating_sub(margin + 2);
     let max_cell_w = (max_field_inner_w / FIELD_COLS as u16).max(1);
     let max_cell_h = (max_field_inner_h / ROWS_VISIBLE as u16).max(1);
-    let cell_w = max_cell_w.min(scale * 2).max(1);
+    let cell_w = max_cell_w.min(want_w).max(1);
     let cell_h = max_cell_h.min(scale).max(1);
     (cell_w, cell_h)
 }
@@ -872,6 +881,7 @@ mod tests {
             for (w, h) in [(120, 50), (80, 24), (60, 22), (40, 12)] {
                 let mut settings = Settings::default();
                 settings.gameplay.grid_scale = scale;
+                settings.gameplay.wide_blocks = scale % 2 == 0;
                 for mode in [GameMode::Classic, GameMode::Sprint, GameMode::Blitz] {
                     let mut game = Game::new(settings.clone(), mode);
                     game.hard_drop();

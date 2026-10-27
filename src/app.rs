@@ -144,13 +144,17 @@ impl App {
         match ev {
             Event::Key(key) => match key.kind {
                 KeyEventKind::Press => return self.handle_key(key),
-                // Auto-repeat keeps soft drop alive and re-fires movement keys.
+                // Auto-repeat keeps soft drop alive. It also re-fires movement
+                // keys, unless key releases are reported and the game times
+                // held moves itself.
                 KeyEventKind::Repeat => {
                     if self.screen == Screen::Gameplay {
-                        if let Some(a @ (Action::MoveLeft | Action::MoveRight | Action::SoftDrop)) =
-                            self.match_gameplay_action(&key)
-                        {
-                            self.dispatch_gameplay_action(a);
+                        match self.match_gameplay_action(&key) {
+                            Some(a @ (Action::MoveLeft | Action::MoveRight)) if !self.has_key_release => {
+                                self.dispatch_gameplay_action(a);
+                            }
+                            Some(Action::SoftDrop) => self.dispatch_gameplay_action(Action::SoftDrop),
+                            _ => {}
                         }
                     }
                 }
@@ -348,14 +352,19 @@ impl App {
                     self.enter(Screen::GameplaySettings);
                     self.menu.set_kind(MenuKind::Gameplay, &self.settings);
                 }
-                2 => self.go_back(),
+                2 => self.leave_settings(),
                 _ => {}
             }
         }
         if ev.code == KeyCode::Esc {
-            self.go_back();
+            self.leave_settings();
         }
         false
+    }
+
+    fn leave_settings(&mut self) {
+        self.go_back();
+        self.menu.set_kind(MenuKind::Main, &self.settings);
     }
 
     /// Controls menu: Up/Down picks an action, Left/Right picks its primary or
@@ -437,6 +446,8 @@ impl App {
                 };
                 self.settings.gameplay.soft_drop_factor = next;
             }
+            3 => self.settings.gameplay.wide_blocks = !self.settings.gameplay.wide_blocks,
+            4 => self.settings.gameplay.fast_movement = !self.settings.gameplay.fast_movement,
             _ => {}
         }
         save::save(&self.settings).ok();
@@ -527,11 +538,13 @@ impl App {
     fn dispatch_gameplay_action(&mut self, action: Action) {
         let Some(game) = self.game.as_mut() else { return };
         match action {
-            Action::MoveLeft => {
-                game.shift(-1);
-            }
-            Action::MoveRight => {
-                game.shift(1);
+            Action::MoveLeft | Action::MoveRight => {
+                let dx = if action == Action::MoveLeft { -1 } else { 1 };
+                if self.has_key_release {
+                    game.press_shift(dx);
+                } else {
+                    game.shift(dx);
+                }
             }
             Action::SoftDrop => {
                 if self.has_key_release {
@@ -563,7 +576,8 @@ impl App {
         }
     }
 
-    /// Handle a key release: ends soft drop if the soft-drop key was let go.
+    /// Handle a key release: ends soft drop or a held move when its key is
+    /// let go.
     fn handle_key_release(&mut self, ev: KeyEvent) {
         if self.screen != Screen::Gameplay {
             return;
@@ -571,6 +585,12 @@ impl App {
         let Some(game) = self.game.as_mut() else { return };
         if crate::input::matches_action(&ev, Action::SoftDrop, &self.settings) {
             game.set_soft_dropping(false);
+        }
+        if crate::input::matches_action(&ev, Action::MoveLeft, &self.settings) {
+            game.release_shift(-1);
+        }
+        if crate::input::matches_action(&ev, Action::MoveRight, &self.settings) {
+            game.release_shift(1);
         }
     }
 }
