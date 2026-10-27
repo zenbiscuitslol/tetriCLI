@@ -24,7 +24,7 @@ impl MenuKind {
     pub fn len(self) -> usize {
         match self {
             Self::Main => 4,
-            Self::ModeSelect => 2,
+            Self::ModeSelect => 3,
             Self::Settings => 3,
             Self::Controls => 9,
             Self::Gameplay => 3,

@@ -68,6 +68,9 @@ pub struct Stats {
     /// Fastest completed 40 Lines run, in seconds.
     #[serde(default)]
     pub best_sprint_secs: Option<f64>,
+    /// Highest score from a Blitz run that lasted the full clock.
+    #[serde(default)]
+    pub best_blitz_score: Option<u64>,
 }
 
 impl Default for Settings {
@@ -103,6 +106,7 @@ impl Default for Settings {
                 best_level: 0,
                 total_playtime_secs: 0.0,
                 best_sprint_secs: None,
+                best_blitz_score: None,
             },
         }
     }

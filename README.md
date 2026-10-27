@@ -3,9 +3,9 @@
 A polished, terminal-based Guideline-style Tetris clone written in Rust, rendered
 with `ratatui` and `crossterm`. All seven tetrominoes, SRS rotation with wall
 kicks, 7-bag randomizer, hold, ghost piece, lock delay, scoring with combos,
-back-to-back, T-Spin / T-Spin mini / perfect-clear detection, two game modes
-(endless **Classic** and the **40 Lines** sprint), and a full menu system with
-persistent, rebindable controls.
+back-to-back, T-Spin / T-Spin mini / perfect-clear detection, three game modes
+(endless **Classic**, the **40 Lines** sprint and 2-minute **Blitz**), and a full
+menu system with persistent, rebindable controls.
 
 ## Build & run
 
@@ -24,9 +24,10 @@ rotation state. The game runs a fixed 60 FPS loop (~16 ms per frame).
 
 A game ends on **block-out** (a new piece spawns into occupied cells) or
 **lock-out** (any part of a piece locks above the visible field). A 40 Lines
-run also ends as soon as the 40th line is cleared. Lines and playtime are added
-to your persistent statistics, along with your best score and level (Classic)
-or your best time (40 Lines).
+run also ends as soon as the 40th line is cleared, and a Blitz run when its
+clock hits zero. Lines and playtime are added to your persistent statistics,
+along with your best score and level (Classic), your best time (40 Lines) or
+your best Blitz score.
 
 ### Game modes
 Choosing **Play** opens the mode menu:
@@ -37,6 +38,14 @@ Choosing **Play** opens the mode menu:
   regardless of the starting-level setting, and the HUD shows lines, pieces,
   pieces-per-second and a millisecond timer. Time spent paused isn't counted.
   Your fastest completed run is saved as **Best 40 Lines** in Statistics.
+- **Blitz** — score as many points as you can in 2 minutes. You always start
+  at level 1 (the starting-level setting is ignored) and level up every 10
+  lines, so gravity and the score multiplier climb as you go. The HUD shows
+  score/level/lines and the time remaining, which stops while paused. A warning
+  flashes across the board for 2 seconds at 1 minute, 30 seconds and 10 seconds
+  left (yellow, then red for the final 10). Only runs
+  that last the full 2 minutes count; topping out ends the run without saving
+  a record. Your best score is saved as **Best Blitz** in Statistics.
 
 ### Tetrominoes & randomizer
 All seven pieces (I, O, T, S, Z, J, L) use the Guideline color set:
@@ -171,7 +180,7 @@ Secondary keys are stored under `controls_secondary` in `settings.json`
 - Scoring with **combos**, **back-to-back**, and **T-Spin / T-Spin Mini** detection
 - **Perfect Clear** detection and bonus scoring
 - Block-out / lock-out game-over detection
-- Two modes: **Classic** (endless, scored on points) and **40 Lines** (sprint against the clock at fixed level-1 gravity)
+- Three modes: **Classic** (endless, scored on points), **40 Lines** (sprint against the clock at fixed level-1 gravity) and **Blitz** (highest score in 2 minutes)
 
 **UI**
 - Splash screen with the tetriCLI logo
@@ -179,18 +188,19 @@ Secondary keys are stored under `controls_secondary` in `settings.json`
 - Guideline-style HUD: Hold, Stats and Info on the left; Next (4 pieces, spaced apart) on the right
   - Classic: Stats shows score/level/lines; time shown as playtime
   - 40 Lines: Stats shows lines (x/40), pieces and pieces-per-second; time shown with millisecond precision
+  - Blitz: Stats shows score/level/lines; time counts down from 2:00.000, with time-left warnings at 1:00, 0:30 and 0:10
 - Last-clear banner (Single / Double / Tetris / T-Spin … / Perfect Clear) shown for ~2s
 - Optional FPS counter (toggle via `show_fps`)
 - Pause and Game Over overlays rendered over the live field
 
 **Menus & navigation**
 - Main menu: Play / Settings / Statistics / Quit
-- Play → mode select: Classic / 40 Lines
+- Play → mode select: Classic / 40 Lines / Blitz
 - Settings → Controls (primary + secondary key for each of the 9 actions, captured live and saved immediately)
 - Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4, Soft Drop Speed 2×–40×)
 - Pause menu: Resume / Restart / Main Menu / Quit
 - Game Over menu: Play Again / Main Menu / Quit
-- Statistics screen: lifetime games played, total lines, best score, best level, best 40 Lines time, total playtime
+- Statistics screen: lifetime games played, total lines, best score, best level, best 40 Lines time, best Blitz score, total playtime
 - Menu navigation is fixed (↑/↓ or `k`/`j`, Enter to select, Esc to back) and independent of the rebindable gameplay keys
 
 **Persistence**

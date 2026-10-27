@@ -4,6 +4,8 @@
 //! Rendering is fully buffered through `ratatui::Frame`. The renderer never
 //! reads input or mutates game state.
 
+use std::time::Duration;
+
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
@@ -158,7 +160,7 @@ fn render_main_menu(frame: &mut Frame, menu: &Menu) {
 
 fn render_mode_select(frame: &mut Frame, menu: &Menu) {
     let area = frame.size();
-    let items = ["Classic", "40 Lines"];
+    let items = ["Classic", "40 Lines", "Blitz"];
     render_simple_menu(frame, area, "Play", &items, menu.selected());
 }
 
@@ -340,12 +342,13 @@ fn render_stats(frame: &mut Frame, menu: &Menu, settings: &Settings) {
     let _ = menu;
     let area = frame.size();
     let s = &settings.stats;
-    let rows: [(&str, String); 6] = [
+    let rows: [(&str, String); 7] = [
         ("Games played", s.games_played.to_string()),
         ("Total lines cleared", s.total_lines.to_string()),
         ("Best score", s.best_score.to_string()),
         ("Best level", s.best_level.to_string()),
         ("Best 40 Lines", s.best_sprint_secs.map_or("—".to_string(), format_sprint_time)),
+        ("Best Blitz", s.best_blitz_score.map_or("—".to_string(), |v| v.to_string())),
         ("Total playtime", format_playtime(s.total_playtime_secs)),
     ];
 
@@ -504,6 +507,18 @@ fn render_playfield(frame: &mut Frame, game: &Game, area: Rect, cell_w: u16, cel
             }
         }
     }
+
+    // Blitz time-left warning, on a cleared row a third of the way down.
+    if let Some(text) = game.blitz_warning() {
+        let color = if game.blitz_remaining() <= Duration::from_secs(10) { Color::Red } else { Color::Yellow };
+        let row = Rect::new(inner.x, inner.y + inner.height / 3, inner.width, 1).intersection(inner);
+        frame.render_widget(Clear, row);
+        frame.render_widget(
+            Paragraph::new(Span::styled(text, Style::default().fg(color).add_modifier(Modifier::BOLD)))
+                .alignment(Alignment::Center),
+            row,
+        );
+    }
 }
 
 /// Map a board row to a visible-row index, if it is on screen.
@@ -549,7 +564,7 @@ fn render_hud_left(frame: &mut Frame, game: &Game, area: Rect) {
     frame.render_widget(stats_block.clone(), chunks[1]);
     let inner = stats_block.inner(chunks[1]);
     let rows = match game.mode {
-        GameMode::Classic => [
+        GameMode::Classic | GameMode::Blitz => [
             ("Score", game.score.to_string()),
             ("Level", game.level.to_string()),
             ("Lines", game.total_lines.to_string()),
@@ -595,6 +610,8 @@ fn render_hud_left(frame: &mut Frame, game: &Game, area: Rect) {
         ("Time", match game.mode {
             GameMode::Classic => format_playtime(game.elapsed().as_secs_f64()),
             GameMode::Sprint => format_sprint_time(game.elapsed().as_secs_f64()),
+            // Blitz counts down.
+            GameMode::Blitz => format_sprint_time(game.blitz_remaining().as_secs_f64()),
         }),
     ];
     let mut y = inner.y;
@@ -699,6 +716,11 @@ fn render_game_over_overlay(frame: &mut Frame, game: &Game, menu: &Menu, setting
             format!("{label}  {}", format_sprint_time(secs))
         }
         GameMode::Sprint => format!("Topped Out  {}/{SPRINT_LINES}", game.total_lines),
+        GameMode::Blitz if game.completed => {
+            let label = if settings.stats.best_blitz_score == Some(game.score) { "New Best!" } else { "Time's Up" };
+            format!("{label}  Score: {}", game.score)
+        }
+        GameMode::Blitz => format!("Topped Out  Score: {}", game.score),
     };
     overlay_menu(frame, area, &title, &items, menu.selected(), 28, 10);
 }
@@ -850,7 +872,7 @@ mod tests {
             for (w, h) in [(120, 50), (80, 24), (60, 22), (40, 12)] {
                 let mut settings = Settings::default();
                 settings.gameplay.grid_scale = scale;
-                for mode in [GameMode::Classic, GameMode::Sprint] {
+                for mode in [GameMode::Classic, GameMode::Sprint, GameMode::Blitz] {
                     let mut game = Game::new(settings.clone(), mode);
                     game.hard_drop();
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();

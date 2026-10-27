@@ -33,11 +33,12 @@
     "grid_scale": 1
   },
   "stats": {
-    "games_played": 11,
-    "total_lines": 138,
+    "games_played": 14,
+    "total_lines": 222,
     "best_score": 48858,
     "best_level": 8,
-    "total_playtime_secs": 1088.7154389010002,
-    "best_sprint_secs": 312.207343817
+    "total_playtime_secs": 1589.1511763970002,
+    "best_sprint_secs": 260.435737496,
+    "best_blitz_score": 7305
   }
 }

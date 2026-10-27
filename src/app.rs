@@ -207,7 +207,12 @@ impl App {
                     stats.best_sprint_secs = Some(secs);
                 }
             }
-            GameMode::Sprint => {}
+            GameMode::Blitz if game.completed => {
+                if stats.best_blitz_score.map_or(true, |best| game.score > best) {
+                    stats.best_blitz_score = Some(game.score);
+                }
+            }
+            GameMode::Sprint | GameMode::Blitz => {}
         }
         save::save(&self.settings).ok();
         self.enter(Screen::GameOver);
@@ -320,6 +325,7 @@ impl App {
             match self.menu.selected() {
                 0 => self.start_game(GameMode::Classic),
                 1 => self.start_game(GameMode::Sprint),
+                2 => self.start_game(GameMode::Blitz),
                 _ => {}
             }
         }

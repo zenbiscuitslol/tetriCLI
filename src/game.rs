@@ -17,6 +17,19 @@ pub const DT_MS: u64 = 1000 / 60;
 /// Lines a 40 Lines (sprint) run must clear to finish.
 pub const SPRINT_LINES: u32 = 40;
 
+/// Length of a Blitz run.
+pub const BLITZ_DURATION: Duration = Duration::from_secs(120);
+
+/// Time-left marks at which Blitz flashes a warning, with its text.
+const BLITZ_WARNINGS: [(Duration, &str); 3] = [
+    (Duration::from_secs(60), "1 MINUTE LEFT"),
+    (Duration::from_secs(30), "30 SECONDS LEFT"),
+    (Duration::from_secs(10), "10 SECONDS LEFT"),
+];
+
+/// How long each Blitz warning stays on screen.
+const BLITZ_WARNING_SHOW: Duration = Duration::from_secs(2);
+
 /// Which ruleset a game is played under.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GameMode {
@@ -26,6 +39,9 @@ pub enum GameMode {
     /// Clear [`SPRINT_LINES`] lines as fast as possible at fixed level-1
     /// gravity; scored by time.
     Sprint,
+    /// Score as many points as possible in [`BLITZ_DURATION`], starting from
+    /// level 1 with levels rising every 10 lines.
+    Blitz,
 }
 
 /// A compact per-frame snapshot of triggers the renderer/UX cares about, used to
@@ -145,7 +161,8 @@ pub struct Game {
     // True once the current piece's spawn fully atop hidden rows would overlap
     // the field — handles block-out / lock-out top-out conditions.
     pub game_over: bool,
-    /// True when a sprint ended by reaching its line goal (not by topping out).
+    /// True when a sprint reached its line goal or a blitz ran out its clock
+    /// (as opposed to topping out).
     pub completed: bool,
 
     // Stats of the most recent lock (used by T-Spin detection which requires
@@ -156,10 +173,10 @@ pub struct Game {
 
 impl Game {
     pub fn new(mut settings: Settings, mode: GameMode) -> Self {
-        // Sprints always run at level-1 gravity so times are comparable.
+        // Sprint and Blitz always start at level 1 so results are comparable.
         let level = match mode {
             GameMode::Classic => settings.gameplay.starting_level.max(1),
-            GameMode::Sprint => 1,
+            GameMode::Sprint | GameMode::Blitz => 1,
         };
         // Pin the starting level back into the setting so persisted stats replay
         // the same starting speed.
@@ -234,9 +251,32 @@ impl Game {
         }
     }
 
+    /// Time left on the Blitz clock.
+    pub fn blitz_remaining(&self) -> Duration {
+        BLITZ_DURATION.saturating_sub(self.elapsed())
+    }
+
+    /// The time-left warning to show right now, if the Blitz clock passed one
+    /// of the [`BLITZ_WARNINGS`] marks within the last [`BLITZ_WARNING_SHOW`].
+    pub fn blitz_warning(&self) -> Option<&'static str> {
+        if self.mode != GameMode::Blitz || self.game_over {
+            return None;
+        }
+        let left = self.blitz_remaining();
+        BLITZ_WARNINGS
+            .iter()
+            .find(|(at, _)| left <= *at && left + BLITZ_WARNING_SHOW > *at)
+            .map(|(_, text)| *text)
+    }
+
     /// End the game, freezing the clock.
     fn end(&mut self) {
-        self.final_time = Some(self.elapsed());
+        let t = self.elapsed();
+        // The frame loop can overshoot the Blitz limit by a few ms; clamp it.
+        self.final_time = Some(match self.mode {
+            GameMode::Blitz => t.min(BLITZ_DURATION),
+            _ => t,
+        });
         self.current = None;
         self.game_over = true;
     }
@@ -415,6 +455,12 @@ impl Game {
             return;
         }
 
+        if self.mode == GameMode::Blitz && self.elapsed() >= BLITZ_DURATION {
+            self.completed = true;
+            self.end();
+            return;
+        }
+
         // Expire the transient clear banner after ~2 seconds.
         if self.clear_banner_timer > 0 {
             self.clear_banner_timer = self.clear_banner_timer.saturating_sub(DT_MS);
@@ -529,7 +575,7 @@ impl Game {
         if lines > 0 {
             self.total_lines += lines;
         }
-        if lines > 0 && self.mode == GameMode::Classic {
+        if lines > 0 && self.mode != GameMode::Sprint {
             // Level progression: every 10 lines.
             let new_level = cmp::max(
                 self.settings.gameplay.starting_level,
@@ -863,6 +909,49 @@ mod tests {
         game.hard_drop();
         assert!(!game.game_over && !game.completed);
         assert_eq!(game.level, 5);
+    }
+
+    #[test]
+    fn blitz_ends_when_clock_runs_out() {
+        let mut game = Game::new(Settings::default(), GameMode::Blitz);
+        game.tick();
+        assert!(!game.game_over);
+        game.start_time -= BLITZ_DURATION;
+        game.tick();
+        assert!(game.game_over && game.completed);
+        assert_eq!(game.elapsed(), BLITZ_DURATION);
+        assert_eq!(game.blitz_remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn blitz_warns_at_time_marks() {
+        let mut game = Game::new(Settings::default(), GameMode::Blitz);
+        assert_eq!(game.blitz_warning(), None);
+        game.start_time -= Duration::from_secs(60);
+        assert_eq!(game.blitz_warning(), Some("1 MINUTE LEFT"));
+        game.start_time -= Duration::from_secs(3);
+        assert_eq!(game.blitz_warning(), None);
+        game.start_time -= Duration::from_secs(27);
+        assert_eq!(game.blitz_warning(), Some("30 SECONDS LEFT"));
+        game.start_time -= Duration::from_secs(20);
+        assert_eq!(game.blitz_warning(), Some("10 SECONDS LEFT"));
+
+        let mut classic = Game::new(Settings::default(), GameMode::Classic);
+        classic.start_time -= Duration::from_secs(60);
+        assert_eq!(classic.blitz_warning(), None);
+    }
+
+    #[test]
+    fn blitz_starts_at_level_one_and_levels_up() {
+        let mut settings = Settings::default();
+        settings.gameplay.starting_level = 15;
+        let mut game = Game::new(settings, GameMode::Blitz);
+        assert_eq!(game.level, 1);
+        game.total_lines = 9;
+        prime_single_clear(&mut game);
+        game.hard_drop();
+        assert_eq!(game.level, 2);
+        assert!(game.score > 0 && !game.game_over);
     }
 
     #[test]
