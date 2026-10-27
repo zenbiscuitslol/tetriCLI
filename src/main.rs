@@ -38,11 +38,17 @@ fn run() -> io::Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     // Ask for key-release/repeat events where supported (kitty protocol).
+    // DISAMBIGUATE_ESCAPE_CODES is required alongside it: without it kitty
+    // sends a bare `\x1b` for both Esc press *and* release, so the release
+    // reads as a second Esc press and instantly closes the pause menu.
     let enhanced = supports_keyboard_enhancement().unwrap_or(false);
     if enhanced {
         execute!(
             stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
         )?;
     }
     let backend = CrosstermBackend::new(stdout);

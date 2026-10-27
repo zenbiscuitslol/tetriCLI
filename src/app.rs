@@ -12,7 +12,7 @@ use crate::game::{Game, GameMode};
 use crate::input::Action;
 use crate::menu::{BindingCapture, Menu, MenuKind};
 use crate::save;
-use crate::settings::Settings;
+use crate::settings::{Controls, Settings};
 
 /// Top-level application screen / mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +49,10 @@ const TICK_DURATION: Duration = Duration::from_millis(TICK_MS);
 /// Soft-drop lifetime per key event when the terminal reports no releases.
 /// Longer than a typical key-repeat interval, shorter than a noticeable lag.
 const SOFT_DROP_PULSE_MS: u64 = 120;
+
+/// Soft drop speed presets offered in Settings → Gameplay, as multiples of
+/// the current gravity.
+const SOFT_DROP_FACTORS: [u32; 5] = [2, 5, 10, 20, 40];
 
 impl App {
     /// Construct using on-disk settings (creating defaults if absent).
@@ -242,8 +246,7 @@ impl App {
         // Check for an in-progress control rebinding first — it consumes the key.
         match self.menu.capture_binding(&ev) {
             BindingCapture::Captured(controls) => {
-                self.settings.controls = controls;
-                save::save(&self.settings).ok();
+                self.apply_controls(controls);
                 return false;
             }
             BindingCapture::Cancelled => return false,
@@ -349,19 +352,39 @@ impl App {
         false
     }
 
+    /// Controls menu: Up/Down picks an action, Left/Right picks its primary or
+    /// secondary key, Enter rebinds it, Backspace/Delete clears a secondary key.
     fn handle_controls_menu(&mut self, ev: KeyEvent) -> bool {
         self.navigate_menu(ev);
-        if ev.code == KeyCode::Enter {
-            self.menu.start_rebind();
-        } else if ev.code == KeyCode::Esc {
-            self.go_back();
-            self.menu.set_kind(MenuKind::Settings, &self.settings);
+        match ev.code {
+            KeyCode::Left | KeyCode::Char('h') => self.menu.select_slot(0),
+            KeyCode::Right | KeyCode::Char('l') => self.menu.select_slot(1),
+            KeyCode::Enter => {
+                self.menu.start_rebind();
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                if let Some(controls) = self.menu.clear_secondary() {
+                    self.apply_controls(controls);
+                }
+            }
+            KeyCode::Esc => {
+                self.go_back();
+                self.menu.set_kind(MenuKind::Settings, &self.settings);
+            }
+            _ => {}
         }
         false
     }
 
-    /// Gameplay settings submenu: two cyclable options (Starting Level and
-    /// Grid Scale). Up/Down selects an option; Left/Right or Enter cycles its
+    /// Store edited `[primary, secondary]` controls and persist them.
+    fn apply_controls(&mut self, [primary, secondary]: [Controls; 2]) {
+        self.settings.controls = primary;
+        self.settings.controls_secondary = secondary;
+        save::save(&self.settings).ok();
+    }
+
+    /// Gameplay settings submenu: three cyclable options (Starting Level, Grid
+    /// Scale and Soft Drop Speed). Up/Down selects an option; Left/Right or Enter cycles its
     /// value; Esc returns to the Settings menu.
     fn handle_gameplay_settings_menu(&mut self, ev: KeyEvent) -> bool {
         self.navigate_menu(ev);
@@ -396,6 +419,17 @@ impl App {
                 } else {
                     if scale <= 1 { 4 } else { scale - 1 }
                 };
+            }
+            2 => {
+                // Step to the next preset above/below the current factor, so a
+                // hand-edited value in settings.json still cycles sensibly.
+                let cur = self.settings.gameplay.soft_drop_factor;
+                let next = if up {
+                    SOFT_DROP_FACTORS.iter().copied().find(|&f| f > cur).unwrap_or(SOFT_DROP_FACTORS[0])
+                } else {
+                    SOFT_DROP_FACTORS.iter().rev().copied().find(|&f| f < cur).unwrap_or(SOFT_DROP_FACTORS[SOFT_DROP_FACTORS.len() - 1])
+                };
+                self.settings.gameplay.soft_drop_factor = next;
             }
             _ => {}
         }
@@ -477,25 +511,11 @@ impl App {
 
     /// Identify which gameplay action `ev` maps to, if any.
     fn match_gameplay_action(&self, ev: &KeyEvent) -> Option<Action> {
-        for (action, field) in Action::BINDINGS {
-            let binding = match field {
-                "move_left" => &self.settings.controls.move_left,
-                "move_right" => &self.settings.controls.move_right,
-                "soft_drop" => &self.settings.controls.soft_drop,
-                "hard_drop" => &self.settings.controls.hard_drop,
-                "rotate_cw" => &self.settings.controls.rotate_cw,
-                "rotate_ccw" => &self.settings.controls.rotate_ccw,
-                "hold" => &self.settings.controls.hold,
-                "pause" => &self.settings.controls.pause,
-                "restart" => &self.settings.controls.restart,
-                _ => continue,
-            };
-            if crate::input::matches_binding(ev, binding) {
-                // Avoid the same key mapping to multiple actions; first match wins.
-                return Some(action);
-            }
-        }
-        None
+        // Avoid the same key mapping to multiple actions; first match wins.
+        Action::BINDINGS
+            .into_iter()
+            .map(|(action, _)| action)
+            .find(|&action| crate::input::matches_action(ev, action, &self.settings))
     }
 
     fn dispatch_gameplay_action(&mut self, action: Action) {
@@ -517,10 +537,10 @@ impl App {
             Action::HardDrop => {
                 game.hard_drop();
             }
-            Action::RotateCw => {
+            Action::RotateRight => {
                 game.rotate(true);
             }
-            Action::RotateCcw => {
+            Action::RotateLeft => {
                 game.rotate(false);
             }
             Action::Hold => {
@@ -543,8 +563,7 @@ impl App {
             return;
         }
         let Some(game) = self.game.as_mut() else { return };
-        let soft = &self.settings.controls.soft_drop;
-        if crate::input::matches_binding(&ev, soft) {
+        if crate::input::matches_action(&ev, Action::SoftDrop, &self.settings) {
             game.set_soft_dropping(false);
         }
     }

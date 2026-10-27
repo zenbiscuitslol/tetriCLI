@@ -64,8 +64,10 @@ on cells not already covered by the active piece, so it never obscures your
 piece. Toggle it via the `show_ghost` setting (on by default).
 
 ### Soft drop & hard drop
-- **Soft drop** (hold the key): gravity is divided by `soft_drop_factor`
-  (default 20), awarding **+1 point per cell** dropped.
+- **Soft drop**: a tap moves the piece down exactly one row; holding the key
+  keeps it falling at `soft_drop_factor` × the current gravity (default 20×,
+  adjustable in Settings → Gameplay: 2×, 5×, 10×, 20×, 40×). Awards
+  **+1 point per cell** dropped.
 - **Hard drop**: instantly slams the piece to the floor and locks it
   immediately, awarding **+2 points per cell** dropped. Hard drops skip the
   post-lock spawn delay.
@@ -134,17 +136,24 @@ full as well. The HUD flashes a banner ("T-SPIN", "T-SPIN SINGLE", …,
 
 ### Controls (defaults, fully rebindable)
 
-| Action        | Default      |
-|---------------|--------------|
-| Move Left     | Left Arrow   |
-| Move Right    | Right Arrow  |
-| Soft Drop     | Down Arrow   |
-| Hard Drop     | Space        |
-| Rotate CW     | Up Arrow     |
-| Rotate CCW    | Z            |
-| Hold Piece    | C            |
-| Pause         | Escape       |
-| Restart       | R            |
+Every action takes a primary and a secondary key; either one triggers it.
+
+| Action        | Primary      | Secondary    |
+|---------------|--------------|--------------|
+| Move Left     | Left Arrow   | —            |
+| Move Right    | Right Arrow  | —            |
+| Soft Drop     | Down Arrow   | —            |
+| Hard Drop     | Space        | —            |
+| Rotate Right  | D            | Up Arrow     |
+| Rotate Left   | Z            | —            |
+| Hold Piece    | C            | —            |
+| Pause         | Escape       | —            |
+| Restart       | R            | —            |
+
+In **Settings → Controls**, ↑/↓ picks an action, ←/→ picks its primary or
+secondary key, Enter rebinds it and Backspace/Delete clears a secondary key.
+Secondary keys are stored under `controls_secondary` in `settings.json`
+(an empty string means unbound).
 
 > Movement is one cell per key press (auto-repeat / DAS-ARR is intentionally
 > disabled). The `das`/`arr` settings remain in the JSON for backward
@@ -166,8 +175,8 @@ full as well. The HUD flashes a banner ("T-SPIN", "T-SPIN SINGLE", …,
 
 **UI**
 - Splash screen with the tetriCLI logo
-- Centered playfield with configurable block size (`grid_scale` 1–4, default 2)
-- Right-hand HUD: Hold, Next (4 pieces), Stats, Info (combo/B2B/time)
+- Centered playfield with configurable block size (`grid_scale` 1–4, default 2), framed by a thin border the blocks sit flush against
+- Guideline-style HUD: Hold, Stats and Info on the left; Next (4 pieces, spaced apart) on the right
   - Classic: Stats shows score/level/lines; time shown as playtime
   - 40 Lines: Stats shows lines (x/40), pieces and pieces-per-second; time shown with millisecond precision
 - Last-clear banner (Single / Double / Tetris / T-Spin … / Perfect Clear) shown for ~2s
@@ -177,8 +186,8 @@ full as well. The HUD flashes a banner ("T-SPIN", "T-SPIN SINGLE", …,
 **Menus & navigation**
 - Main menu: Play / Settings / Statistics / Quit
 - Play → mode select: Classic / 40 Lines
-- Settings → Controls (rebind any of the 9 actions, captured live and saved immediately)
-- Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4)
+- Settings → Controls (primary + secondary key for each of the 9 actions, captured live and saved immediately)
+- Settings → Gameplay (Starting Level 1–20, Grid Scale 1–4, Soft Drop Speed 2×–40×)
 - Pause menu: Resume / Restart / Main Menu / Quit
 - Game Over menu: Play Again / Main Menu / Quit
 - Statistics screen: lifetime games played, total lines, best score, best level, best 40 Lines time, total playtime

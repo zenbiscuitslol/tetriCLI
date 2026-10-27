@@ -50,9 +50,17 @@ pub fn code_label(code: KeyCode) -> String {
     }
 }
 
-/// True if a pressed key event matches the stored binding string.
+/// True if a pressed key event matches the stored binding string. An empty
+/// (unbound) binding never matches.
 pub fn matches_binding(ev: &KeyEvent, binding: &str) -> bool {
-    event_label(ev).eq_ignore_ascii_case(binding)
+    !binding.is_empty() && event_label(ev).eq_ignore_ascii_case(binding)
+}
+
+/// True if a pressed key event matches either of `action`'s bindings.
+pub fn matches_action(ev: &KeyEvent, action: Action, settings: &crate::settings::Settings) -> bool {
+    [&settings.controls, &settings.controls_secondary]
+        .into_iter()
+        .any(|controls| matches_binding(ev, binding_for(action, controls)))
 }
 
 /// Pretty-print a binding label for the settings UI (e.g. `"Space"` -> `"Space"`,
@@ -73,8 +81,8 @@ pub enum Action {
     MoveRight,
     SoftDrop,
     HardDrop,
-    RotateCw,
-    RotateCcw,
+    RotateRight,
+    RotateLeft,
     Hold,
     Pause,
     Restart,
@@ -88,8 +96,8 @@ impl Action {
         (Self::MoveRight, "move_right"),
         (Self::SoftDrop, "soft_drop"),
         (Self::HardDrop, "hard_drop"),
-        (Self::RotateCw, "rotate_cw"),
-        (Self::RotateCcw, "rotate_ccw"),
+        (Self::RotateRight, "rotate_cw"),
+        (Self::RotateLeft, "rotate_ccw"),
         (Self::Hold, "hold"),
         (Self::Pause, "pause"),
         (Self::Restart, "restart"),
@@ -103,8 +111,8 @@ impl Action {
             Self::MoveRight => "Move Right",
             Self::SoftDrop => "Soft Drop",
             Self::HardDrop => "Hard Drop",
-            Self::RotateCw => "Rotate CW",
-            Self::RotateCcw => "Rotate CCW",
+            Self::RotateRight => "Rotate Right",
+            Self::RotateLeft => "Rotate Left",
             Self::Hold => "Hold Piece",
             Self::Pause => "Pause",
             Self::Restart => "Restart",
@@ -112,17 +120,15 @@ impl Action {
     }
 }
 
-/// Look up the binding string for `action` inside `controls`, returning it as
-/// a borrowed slice where possible via a match.
-#[allow(dead_code)]
+/// Look up the binding string for `action` inside `controls`.
 pub fn binding_for<'a>(action: Action, controls: &'a crate::settings::Controls) -> &'a str {
     match action {
         Action::MoveLeft => &controls.move_left,
         Action::MoveRight => &controls.move_right,
         Action::SoftDrop => &controls.soft_drop,
         Action::HardDrop => &controls.hard_drop,
-        Action::RotateCw => &controls.rotate_cw,
-        Action::RotateCcw => &controls.rotate_ccw,
+        Action::RotateRight => &controls.rotate_cw,
+        Action::RotateLeft => &controls.rotate_ccw,
         Action::Hold => &controls.hold,
         Action::Pause => &controls.pause,
         Action::Restart => &controls.restart,
@@ -136,10 +142,36 @@ pub fn set_binding(action: Action, controls: &mut crate::settings::Controls, val
         Action::MoveRight => controls.move_right = value,
         Action::SoftDrop => controls.soft_drop = value,
         Action::HardDrop => controls.hard_drop = value,
-        Action::RotateCw => controls.rotate_cw = value,
-        Action::RotateCcw => controls.rotate_ccw = value,
+        Action::RotateRight => controls.rotate_cw = value,
+        Action::RotateLeft => controls.rotate_ccw = value,
         Action::Hold => controls.hold = value,
         Action::Pause => controls.pause = value,
         Action::Restart => controls.restart = value,
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::Settings;
+    use crossterm::event::KeyModifiers;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn rotate_right_defaults_to_d_and_up() {
+        let settings = Settings::default();
+        assert!(matches_action(&key(KeyCode::Char('d')), Action::RotateRight, &settings));
+        assert!(matches_action(&key(KeyCode::Up), Action::RotateRight, &settings));
+    }
+
+    #[test]
+    fn unbound_secondary_never_matches() {
+        let settings = Settings::default();
+        assert!(settings.controls_secondary.move_left.is_empty());
+        assert!(!matches_binding(&key(KeyCode::Char('x')), ""));
+        assert!(matches_action(&key(KeyCode::Left), Action::MoveLeft, &settings));
+        assert!(!matches_action(&key(KeyCode::Up), Action::MoveLeft, &settings));
     }
 }

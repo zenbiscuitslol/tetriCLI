@@ -381,15 +381,32 @@ impl Game {
 
     /// Start or stop soft drop. While active it lasts until explicitly stopped.
     pub fn set_soft_dropping(&mut self, v: bool) {
-        self.soft_dropping = v;
+        if v {
+            self.begin_soft_drop();
+        } else {
+            self.soft_dropping = false;
+        }
         self.soft_drop_ttl = None;
     }
 
     /// Soft drop that expires on its own unless refreshed (for terminals that
     /// never report key releases).
     pub fn soft_drop_pulse(&mut self, ttl_ms: u64) {
-        self.soft_dropping = true;
+        self.begin_soft_drop();
         self.soft_drop_ttl = Some(ttl_ms);
+    }
+
+    /// When a soft drop starts, move one row right away (so a tap is exactly
+    /// one row) and restart the gravity clock. Without the reset, time banked
+    /// toward the next normal-gravity step would be spent at the much faster
+    /// soft-drop rate, dropping the piece many rows in a single frame.
+    fn begin_soft_drop(&mut self) {
+        if self.soft_dropping {
+            return;
+        }
+        self.soft_dropping = true;
+        self.gravity_acc = 0.0;
+        self.soft_drop_step();
     }
 
     /// Advance the game by one frame (`DT_MS` milliseconds).
@@ -857,5 +874,17 @@ mod tests {
         assert_eq!(game.elapsed(), t);
         game.set_paused(false);
         assert!(game.elapsed() < t + Duration::from_millis(5));
+    }
+
+    #[test]
+    fn soft_drop_tap_moves_one_row_despite_banked_gravity() {
+        let mut game = Game::new(Settings::default(), GameMode::Classic);
+        let y0 = game.current.unwrap().y;
+        // Most of a level-1 gravity period has elapsed when the key goes down.
+        game.gravity_acc = 900.0;
+        game.set_soft_dropping(true);
+        game.tick();
+        game.set_soft_dropping(false);
+        assert_eq!(game.current.unwrap().y - y0, 1);
     }
 }

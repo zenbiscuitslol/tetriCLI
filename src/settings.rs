@@ -7,12 +7,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub controls: Controls,
+    /// Optional second key for each action. An empty string means unbound.
+    #[serde(default = "default_controls_secondary")]
+    pub controls_secondary: Controls,
     pub gameplay: Gameplay,
     pub stats: Stats,
 }
 
-/// Rebindable controls. Each binding is the stringified name of a
-/// [`crate::input::Key`](super::input::Key) value.
+/// Rebindable controls. Each binding is a key label produced by
+/// [`crate::input::event_label`], or empty when unbound.
+///
+/// The `rotate_cw` / `rotate_ccw` keys keep their original names so existing
+/// settings files still load; the UI calls them Rotate Right / Rotate Left.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Controls {
     pub move_left: String,
@@ -43,6 +49,10 @@ pub struct Gameplay {
     pub grid_scale: u32,
 }
 
+fn default_controls_secondary() -> Controls {
+    Controls { rotate_cw: "Up".into(), ..Controls::default() }
+}
+
 fn default_grid_scale() -> u32 {
     1
 }
@@ -68,12 +78,13 @@ impl Default for Settings {
                 move_right: "Right".into(),
                 soft_drop: "Down".into(),
                 hard_drop: "Space".into(),
-                rotate_cw: "Up".into(),
+                rotate_cw: "D".into(),
                 rotate_ccw: "Z".into(),
                 hold: "C".into(),
                 pause: "Esc".into(),
                 restart: "R".into(),
             },
+            controls_secondary: default_controls_secondary(),
             gameplay: Gameplay {
                 starting_level: 1,
                 das: 133,
@@ -105,8 +116,8 @@ impl Settings {
         ("Move Right", "move_right"),
         ("Soft Drop", "soft_drop"),
         ("Hard Drop", "hard_drop"),
-        ("Rotate CW", "rotate_cw"),
-        ("Rotate CCW", "rotate_ccw"),
+        ("Rotate Right", "rotate_cw"),
+        ("Rotate Left", "rotate_ccw"),
         ("Hold Piece", "hold"),
         ("Pause", "pause"),
         ("Restart", "restart"),

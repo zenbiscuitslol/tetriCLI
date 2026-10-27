@@ -10,6 +10,17 @@
     "pause": "Esc",
     "restart": "R"
   },
+  "controls_secondary": {
+    "move_left": "",
+    "move_right": "",
+    "soft_drop": "",
+    "hard_drop": "",
+    "rotate_cw": "Up",
+    "rotate_ccw": "",
+    "hold": "",
+    "pause": "",
+    "restart": ""
+  },
   "gameplay": {
     "starting_level": 1,
     "das": 133,
@@ -22,11 +33,11 @@
     "grid_scale": 1
   },
   "stats": {
-    "games_played": 6,
-    "total_lines": 97,
+    "games_played": 11,
+    "total_lines": 138,
     "best_score": 48858,
     "best_level": 8,
-    "total_playtime_secs": 740.8211669320001,
-    "best_sprint_secs": null
+    "total_playtime_secs": 1088.7154389010002,
+    "best_sprint_secs": 312.207343817
   }
 }

@@ -6,6 +6,7 @@
 
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::symbols::border;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
@@ -180,13 +181,15 @@ fn render_gameplay_settings(frame: &mut Frame, menu: &Menu, settings: &Settings)
     let selected = menu.selected();
     let level = settings.gameplay.starting_level;
     let scale = settings.gameplay.grid_scale.clamp(1, 4);
+    let soft_drop = settings.gameplay.soft_drop_factor;
 
-    let rows: [(&str, String); 2] = [
+    let rows: [(&str, String); 3] = [
         ("Starting Level", level.to_string()),
         ("Grid Scale", format!("{scale}x")),
+        ("Soft Drop Speed", format!("{soft_drop}x")),
     ];
 
-    let width = area.width.min(34);
+    let width = area.width.min(42);
     let height = rows.len() as u16 * 2 + 6;
     let inner = block_centered(frame, area, width, height);
 
@@ -247,10 +250,11 @@ fn render_controls(frame: &mut Frame, menu: &Menu) {
     let area = frame.size();
     let fields = Settings::CONTROL_FIELDS;
     let selected = menu.selected();
+    let slot = menu.slot();
     let controls = menu.active_controls();
     let pending = menu.pending_binding();
 
-    let width = area.width.min(44);
+    let width = area.width.min(56);
     let height = (fields.len() as u16) * 2 + 6;
     let inner = block_centered(frame, area, width, height);
 
@@ -265,9 +269,23 @@ fn render_controls(frame: &mut Frame, menu: &Menu) {
     );
     let footer_y = inner.bottom().saturating_sub(1);
 
-    for (i, (label, field)) in fields.iter().enumerate() {
-        let binding = field_value(controls, field);
-        let pretty = crate::input::pretty_label(binding);
+    // Label column on the left, then one right-aligned column per binding slot.
+    let col_w = 16.min(inner.width / 3);
+    let label_w = inner.width.saturating_sub(2 * col_w);
+    let col_x = [inner.x + label_w, inner.x + label_w + col_w];
+    for (s, title) in ["Primary", "Secondary"].into_iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!("{title} "), Style::default().fg(Color::DarkGray)))
+                .alignment(Alignment::Right),
+            Rect::new(col_x[s], inner.y + 2, col_w, 1),
+        );
+    }
+
+    for (i, (label, _)) in fields.iter().enumerate() {
+        let row_y = inner.y + 3 + i as u16 * 2;
+        if row_y >= footer_y {
+            break;
+        }
 
         let is_sel = i == selected;
         let label_style = if is_sel {
@@ -275,62 +293,43 @@ fn render_controls(frame: &mut Frame, menu: &Menu) {
         } else {
             Style::default().fg(Color::Gray)
         };
-        let binding_style = if is_sel {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        let row_y = inner.y + 1 + i as u16 * 2;
-        if row_y >= footer_y {
-            break;
-        }
-
-        let side_w = inner.width / 2;
         frame.render_widget(
             Paragraph::new(Span::styled((*label).to_string(), label_style)).alignment(Alignment::Left),
-            Rect::new(inner.x, row_y, side_w, 1),
+            Rect::new(inner.x, row_y, label_w, 1),
         );
-        if pending == Some(i) {
+
+        let action = crate::input::Action::BINDINGS[i].0;
+        for s in 0..2 {
+            let binding = crate::input::binding_for(action, &controls[s]);
+            let (text, style) = if pending == Some((i, s)) {
+                ("Press a key…".to_string(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            } else {
+                let text = if binding.is_empty() { "—".to_string() } else { crate::input::pretty_label(binding) };
+                let style = if is_sel && s == slot {
+                    Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else if is_sel {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                // Pad so the highlighted cell reads as a chip rather than bare text.
+                (format!(" {text} "), style)
+            };
             frame.render_widget(
-                Paragraph::new(Span::styled(
-                    "Press any key…".to_string(),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ))
-                .alignment(Alignment::Right),
-                Rect::new(inner.x + side_w, row_y, side_w, 1),
-            );
-        } else {
-            frame.render_widget(
-                Paragraph::new(Span::styled(pretty, binding_style)).alignment(Alignment::Right),
-                Rect::new(inner.x + side_w, row_y, side_w, 1),
+                Paragraph::new(Span::styled(text, style)).alignment(Alignment::Right),
+                Rect::new(col_x[s], row_y, col_w, 1),
             );
         }
     }
 
     frame.render_widget(
         Paragraph::new(Span::styled(
-            "<Enter> rebind   <Esc> back".to_string(),
+            "<Enter> rebind  <←/→> key  <Del> clear  <Esc> back".to_string(),
             Style::default().fg(Color::DarkGray),
         ))
         .alignment(Alignment::Center),
         Rect::new(inner.x, footer_y, inner.width, 1),
     );
-}
-
-fn field_value<'a>(c: &'a crate::settings::Controls, field: &str) -> &'a str {
-    match field {
-        "move_left" => &c.move_left,
-        "move_right" => &c.move_right,
-        "soft_drop" => &c.soft_drop,
-        "hard_drop" => &c.hard_drop,
-        "rotate_cw" => &c.rotate_cw,
-        "rotate_ccw" => &c.rotate_ccw,
-        "hold" => &c.hold,
-        "pause" => &c.pause,
-        "restart" => &c.restart,
-        _ => "",
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -403,28 +402,46 @@ fn render_game(frame: &mut Frame, game: &Game) {
     let (cell_w, cell_h) = cell_dims(game, area);
     let field_w = FIELD_COLS as u16 * cell_w;
     let field_h = ROWS_VISIBLE as u16 * cell_h;
-    let hud_w = 20u16;
-    let gap = 1u16;
-    let total_w = field_w + 2 + gap + hud_w + 2;
+    let total_w = HUD_W + HUD_GAP + field_w + 2 + HUD_GAP + HUD_W;
     let total_h = field_h + 2;
 
     let layout_left = area.width.saturating_sub(total_w) / 2;
     let layout_top = area.height.saturating_sub(total_h) / 2;
+    let field_x = layout_left + HUD_W + HUD_GAP;
 
     // Clip to the terminal so undersized windows degrade instead of panicking.
-    let playfield = Rect::new(layout_left, layout_top, field_w + 2, total_h).intersection(area);
-    let hud = Rect::new(layout_left + field_w + 2 + gap, layout_top, hud_w, total_h).intersection(area);
+    let left_hud = Rect::new(layout_left, layout_top, HUD_W, total_h).intersection(area);
+    let playfield = Rect::new(field_x, layout_top, field_w + 2, total_h).intersection(area);
+    let right_hud = Rect::new(field_x + field_w + 2 + HUD_GAP, layout_top, HUD_W, total_h).intersection(area);
 
+    render_hud_left(frame, game, left_hud);
     render_playfield(frame, game, playfield, cell_w, cell_h);
-    render_hud(frame, game, hud);
+    render_hud_right(frame, game, right_hud);
 }
+
+/// Width of each HUD column (Hold/Stats/Info on the left, Next on the right).
+const HUD_W: u16 = 20;
+/// Columns between each HUD column and the playfield.
+const HUD_GAP: u16 = 1;
+
+/// Thin playfield frame drawn with eighth-block characters on the edge facing
+/// the field, so blocks sit flush against it (box-drawing lines like `─` sit
+/// mid-cell and leave a visible gap). Corners stay blank; the lines meet there.
+const FLUSH_BORDER: border::Set = border::Set {
+    top_left: " ",
+    top_right: " ",
+    bottom_left: " ",
+    bottom_right: " ",
+    vertical_left: "▕",
+    vertical_right: "▏",
+    horizontal_top: "▁",
+    horizontal_bottom: "▔",
+};
 
 fn cell_dims(game: &Game, area: Rect) -> (u16, u16) {
     let scale = game.settings.gameplay.grid_scale.clamp(1, 4) as u16;
-    let hud_w = 20u16;
-    let gap = 1u16;
     let margin = 4u16;
-    let max_field_inner_w = area.width.saturating_sub(hud_w + gap + margin + 2);
+    let max_field_inner_w = area.width.saturating_sub(2 * (HUD_W + HUD_GAP) + margin + 2);
     let max_field_inner_h = area.height.saturating_sub(margin + 2);
     let max_cell_w = (max_field_inner_w / FIELD_COLS as u16).max(1);
     let max_cell_h = (max_field_inner_h / ROWS_VISIBLE as u16).max(1);
@@ -436,7 +453,7 @@ fn cell_dims(game: &Game, area: Rect) -> (u16, u16) {
 fn render_playfield(frame: &mut Frame, game: &Game, area: Rect, cell_w: u16, cell_h: u16) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_set(FLUSH_BORDER)
         .title(Span::styled(
             " tetriCLI ".to_string(),
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
@@ -497,14 +514,22 @@ fn visible_row(y: i32) -> Option<usize> {
     Board::visible_row(y as usize).filter(|&vr| vr < ROWS_VISIBLE)
 }
 
-fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
+/// Pieces shown in the Next queue.
+const NEXT_COUNT: u16 = 4;
+/// Rows per Next slot (the tallest spawn-state piece is 2 rows).
+const NEXT_SLOT_H: u16 = 2;
+/// Blank rows between Next slots so consecutive pieces don't touch.
+const NEXT_SLOT_GAP: u16 = 1;
+
+/// Left HUD column: Hold, Stats and Info stacked from the top.
+fn render_hud_left(frame: &mut Frame, game: &Game, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
-            Constraint::Length(9),
-            Constraint::Min(5),
             Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Min(0),
         ])
         .split(area);
 
@@ -517,27 +542,12 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
         preview_minipiece(frame, hold_block.inner(chunks[0]), kind, game.hold_used);
     }
 
-    // Next.
-    let next_block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(" Next ", Style::default().fg(Color::Cyan)));
-    frame.render_widget(next_block.clone(), chunks[1]);
-    let next_inner = next_block.inner(chunks[1]);
-    let slot_h = 2u16;
-    for (i, kind) in game.queue.iter().take(4).enumerate() {
-        let slot = Rect::new(next_inner.x, next_inner.y + i as u16 * slot_h, next_inner.width, slot_h);
-        if slot.bottom() > next_inner.bottom() {
-            break;
-        }
-        preview_minipiece(frame, slot, *kind, false);
-    }
-
     // Stats panel.
     let stats_block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(" Stats ", Style::default().fg(Color::Cyan)));
-    frame.render_widget(stats_block.clone(), chunks[2]);
-    let inner = stats_block.inner(chunks[2]);
+    frame.render_widget(stats_block.clone(), chunks[1]);
+    let inner = stats_block.inner(chunks[1]);
     let rows = match game.mode {
         GameMode::Classic => [
             ("Score", game.score.to_string()),
@@ -576,8 +586,8 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
     let info_block = Block::default()
         .borders(Borders::ALL)
         .title(Span::styled(" Info ", Style::default().fg(Color::Cyan)));
-    frame.render_widget(info_block.clone(), chunks[3]);
-    let inner = info_block.inner(chunks[3]);
+    frame.render_widget(info_block.clone(), chunks[2]);
+    let inner = info_block.inner(chunks[2]);
     let combo = game.combo.map(|c| c.max(1)).unwrap_or(0);
     let rows = [
         ("Combo", if combo > 1 { format!("{combo}x") } else { "—".to_string() }),
@@ -603,6 +613,27 @@ fn render_hud(frame: &mut Frame, game: &Game, area: Rect) {
             Rect::new(inner.x + side_w, y, inner.width - side_w, 1),
         );
         y += 1;
+    }
+}
+
+/// Right HUD column: the Next queue, with the last-clear banner on the
+/// bottom row.
+fn render_hud_right(frame: &mut Frame, game: &Game, area: Rect) {
+    // On short terminals the box is clipped and simply shows fewer pieces.
+    let next_h = (2 + NEXT_COUNT * NEXT_SLOT_H + (NEXT_COUNT - 1) * NEXT_SLOT_GAP).min(area.height);
+    let next_area = Rect::new(area.x, area.y, area.width, next_h);
+    let next_block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(" Next ", Style::default().fg(Color::Cyan)));
+    frame.render_widget(next_block.clone(), next_area);
+    let next_inner = next_block.inner(next_area);
+    for (i, kind) in game.queue.iter().take(NEXT_COUNT as usize).enumerate() {
+        let slot_y = next_inner.y + i as u16 * (NEXT_SLOT_H + NEXT_SLOT_GAP);
+        let slot = Rect::new(next_inner.x, slot_y, next_inner.width, NEXT_SLOT_H);
+        if slot.bottom() > next_inner.bottom() {
+            break;
+        }
+        preview_minipiece(frame, slot, *kind, false);
     }
 
     // Last-clear banner.
